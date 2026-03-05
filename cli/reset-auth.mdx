@@ -1,0 +1,69 @@
+---
+title: 'reset-auth'
+description: 'Regenerate AUTH_SECRET and invalidate all active sessions'
+---
+
+## Overview
+
+The `reset-auth` command regenerates the `AUTH_SECRET` environment variable, which is used to encrypt session cookies. This immediately invalidates all active user sessions.
+
+## Usage
+
+```bash
+npx thepopebot reset-auth
+```
+
+## What It Does
+
+1. Generates a new random 32-byte base64-encoded secret
+2. Updates `AUTH_SECRET` in your `.env` file
+3. Invalidates all existing sessions (users must log in again)
+
+## When to Use
+
+Use `reset-auth` when:
+
+- You suspect your `AUTH_SECRET` has been compromised
+- You want to force all users to re-authenticate
+- You need to clear all active sessions immediately
+
+<Warning>
+After running this command, all users will be logged out and must sign in again. Restart your server for the change to take effect.
+</Warning>
+
+## Output
+
+```bash
+$ npx thepopebot reset-auth
+
+  AUTH_SECRET regenerated.
+  All existing sessions have been invalidated.
+  Restart your server for the change to take effect.
+```
+
+## Requirements
+
+- Must be run in a thepopebot project directory
+- Requires an existing `.env` file (run `npm run setup` first if you haven't)
+
+## Restart Required
+
+After regenerating the secret, restart your server:
+
+```bash
+# Local development
+npm run dev
+
+# Docker
+docker compose restart
+```
+
+## Security Note
+
+The `AUTH_SECRET` is critical for session security. Keep it private and never commit it to version control. The `.env` file is gitignored by default.
+
+## Related
+
+- [CLI: setup](/cli/setup) - Initial project setup that generates AUTH_SECRET
+- [Security](/advanced/security) - Security best practices
+- [Deployment](/advanced/deployment) - Production deployment guide

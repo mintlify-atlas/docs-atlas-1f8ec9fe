@@ -96,7 +96,9 @@
               "api/exports/auth",
               "api/exports/chat",
               "api/exports/code",
-              "api/exports/config"
+              "api/exports/config",
+              "api/exports/voice",
+              "api/exports/cluster"
             ]
           }
         ]
@@ -111,7 +113,9 @@
               "cli/setup",
               "cli/upgrade",
               "cli/secrets",
-              "cli/templates"
+              "cli/templates",
+              "cli/reset-auth",
+              "cli/sync"
             ]
           }
         ]

@@ -1,0 +1,114 @@
+---
+title: 'sync'
+description: 'Sync local package changes to a test install for development'
+---
+
+## Overview
+
+The `sync` command is a development tool for thepopebot maintainers and contributors. It synchronizes changes from a local thepopebot package repository to a test installation, enabling rapid iteration without publishing to npm.
+
+<Warning>
+This command is for package development only. End users should use `npx thepopebot upgrade` to update their installations.
+</Warning>
+
+## Usage
+
+```bash
+npx thepopebot sync <path-to-test-project>
+```
+
+## What It Does
+
+1. **Builds** the package (runs `npm run build`)
+2. **Packs** the package into a tarball (`npm pack`)
+3. **Installs** the tarball in the target project
+4. **Mirrors** template files to the target project (overwrites managed files)
+5. **Rebuilds** Docker images if running in Docker
+
+## Example
+
+```bash
+# From your local thepopebot package repository
+cd ~/thepopebot
+
+# Sync to a test installation
+npx thepopebot sync ~/test-agent
+```
+
+## Requirements
+
+- Must be run from the thepopebot package source directory
+- Target path must be an existing thepopebot project
+- Target project must have a valid `package.json`
+
+## Workflow
+
+This command is designed for the develop-test cycle:
+
+```bash
+# 1. Make changes to the package source
+vim lib/chat/api.js
+
+# 2. Sync to test project
+npx thepopebot sync ~/test-agent
+
+# 3. Test the changes
+cd ~/test-agent
+npm run dev
+
+# 4. Repeat
+```
+
+## What Gets Synced
+
+**Package code:**
+- `api/`
+- `lib/`
+- `config/`
+- `bin/`
+- `setup/`
+- `drizzle/`
+
+**Template files:**
+- `.github/workflows/`
+- `docker/`
+- `app/`
+- `docker-compose.yml`
+- Other managed files
+
+**What doesn't get synced:**
+- User configuration (`config/*.md`, `config/*.json`)
+- User's `.env` file
+- `skills/active/` directory
+- `data/` directory
+
+## Docker Rebuild
+
+If the target project uses Docker, sync will:
+1. Rebuild the event handler image with the new package
+2. Restart Docker Compose services
+3. Ensure the new code is running
+
+## Use Cases
+
+- Testing changes before publishing to npm
+- Debugging issues in a realistic environment
+- Developing new features with live reload
+- Validating breaking changes
+
+## For Contributors
+
+If you're contributing to thepopebot:
+
+1. Fork and clone the repository
+2. Create a test project: `mkdir test && cd test && npx thepopebot@latest init`
+3. Run setup in the test project: `npm run setup`
+4. Make changes to the package source
+5. Sync changes: `npx thepopebot sync ../test`
+6. Test your changes in the test project
+
+## Related
+
+- [CLI: upgrade](/cli/upgrade) - Update an installation to a published version
+- [CLI: init](/cli/init) - Initialize a new project
+- [Contributing](https://github.com/stephengpope/thepopebot/blob/main/CONTRIBUTING.md) - Contribution guidelines

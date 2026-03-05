@@ -1,0 +1,85 @@
+---
+title: 'thepopebot/voice'
+description: 'Voice input components and actions for real-time speech transcription'
+---
+
+## Overview
+
+The voice module provides real-time voice transcription via AssemblyAI streaming API. Users can speak into their microphone and get live text transcription in the chat interface.
+
+## Exports
+
+### `thepopebot/voice`
+
+React hook for voice input:
+
+```typescript
+import { useVoiceInput } from 'thepopebot/voice';
+```
+
+**`useVoiceInput()`**
+
+Custom React hook that provides voice transcription state and controls.
+
+Returns:
+- `isRecording` (boolean) - Whether recording is active
+- `transcript` (string) - Current transcription text
+- `startRecording()` - Start voice capture
+- `stopRecording()` - Stop voice capture
+- `error` (string | null) - Error message if transcription fails
+
+### `thepopebot/voice/actions`
+
+Server actions for voice token management:
+
+```typescript
+import { getVoiceToken } from 'thepopebot/voice/actions';
+```
+
+**`getVoiceToken()`**
+
+Server action that generates a temporary AssemblyAI streaming token.
+
+Returns:
+- `{ token: string }` on success
+- `{ error: string }` if voice transcription is not configured or token fetch fails
+
+<Note>
+Requires `ASSEMBLYAI_API_KEY` environment variable. Token is valid for 60 seconds and is only needed at WebSocket handshake time.
+</Note>
+
+## Setup
+
+Enable voice input by setting the AssemblyAI API key:
+
+```bash
+# In your .env file
+ASSEMBLYAI_API_KEY=your_assemblyai_api_key_here
+```
+
+Get your API key from [AssemblyAI](https://www.assemblyai.com/).
+
+## Usage Example
+
+```jsx
+import { useVoiceInput } from 'thepopebot/voice';
+
+export function VoiceButton() {
+  const { isRecording, transcript, startRecording, stopRecording, error } = useVoiceInput();
+
+  return (
+    <div>
+      <button onClick={isRecording ? stopRecording : startRecording}>
+        {isRecording ? 'Stop' : 'Start'} Recording
+      </button>
+      {transcript && <p>Transcript: {transcript}</p>}
+      {error && <p>Error: {error}</p>}
+    </div>
+  );
+}
+```
+
+## Related
+
+- [Web Interface](/chat/web-interface) - Built-in voice input in chat
+- [Environment Variables](/configuration/environment) - Configure AssemblyAI

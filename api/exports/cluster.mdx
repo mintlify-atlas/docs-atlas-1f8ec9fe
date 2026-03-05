@@ -1,0 +1,101 @@
+---
+title: 'thepopebot/cluster'
+description: 'Cluster management components and actions for distributed agent execution'
+---
+
+## Overview
+
+The cluster module enables distributed agent execution across multiple worker instances. Each cluster worker can execute jobs independently while reporting back to the main event handler.
+
+<Info>
+Cluster management is an advanced feature for scaling agent job execution across multiple machines or containers.
+</Info>
+
+## Exports
+
+### `thepopebot/cluster`
+
+React components for cluster management UI:
+
+```typescript
+import { 
+  ClustersLayout,
+  ClustersPage,
+  ClusterRolesPage,
+  ClusterPage
+} from 'thepopebot/cluster';
+```
+
+**`ClustersLayout`**
+
+Layout component for cluster management pages.
+
+**`ClustersPage`**
+
+Dashboard showing all registered cluster workers and their status.
+
+**`ClusterRolesPage`**
+
+Page for managing cluster worker roles and permissions.
+
+**`ClusterPage`**
+
+Detailed view of a specific cluster worker with logs and controls.
+
+### `thepopebot/cluster/actions`
+
+Server actions for cluster operations:
+
+```typescript
+import { 
+  listClusters,
+  getCluster,
+  createCluster,
+  deleteCluster,
+  updateCluster
+} from 'thepopebot/cluster/actions';
+```
+
+All actions require authentication and perform database operations on cluster worker registrations.
+
+## Cluster Webhooks
+
+Each cluster worker has a unique webhook endpoint:
+
+```
+POST /api/cluster/{worker-id}/webhook
+```
+
+Workers use this endpoint to report job status, send logs, and communicate with the main event handler.
+
+## Architecture
+
+```
+┌─────────────────┐
+│ Event Handler   │ ← Main coordinator
+└────────┬────────┘
+         │
+    ┌────┴────┬────────┬────────┐
+    │         │        │        │
+┌───▼───┐ ┌──▼───┐ ┌──▼───┐ ┌──▼───┐
+│Worker1│ │Worker2│ │Worker3│ │Worker4│
+└───────┘ └──────┘ └──────┘ └──────┘
+```
+
+- Event Handler assigns jobs to workers
+- Workers execute jobs independently
+- Workers report back via webhooks
+- Results are aggregated by the main handler
+
+## Use Cases
+
+- **High Volume**: Process many jobs simultaneously across multiple workers
+- **Geographic Distribution**: Run workers in different regions for lower latency
+- **Resource Isolation**: Separate workers for different job types or clients
+- **Fault Tolerance**: Continue processing even if individual workers fail
+
+## Related
+
+- [Architecture](/architecture) - Understanding the two-layer design
+- [Docker Agent](/docker-agent) - How individual agents execute
+- [Configuration](/configuration/environment) - Environment setup for clusters
