@@ -1,0 +1,153 @@
+{
+  "projectType": "framework",
+  "projectName": "The Pope Bot",
+  "projectDescription": "An autonomous AI agent framework with a two-layer architecture: Next.js Event Handler + Docker Agent.",
+  "theme": "aspen",
+  "primaryColor": "#df4234",
+  "lightColor": "#2a3098",
+  "darkColor": "#f3ecef",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "architecture",
+              "event-handler",
+              "docker-agent",
+              "skills-system"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment",
+              "configuration/personality",
+              "configuration/cron-jobs",
+              "configuration/webhooks",
+              "configuration/llm-models"
+            ]
+          },
+          {
+            "group": "Chat Integrations",
+            "pages": [
+              "chat/web-interface",
+              "chat/telegram",
+              "chat/adding-channels"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/deployment",
+              "advanced/security",
+              "advanced/auto-merge",
+              "advanced/code-workspaces",
+              "advanced/building-skills"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "API Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/create-job",
+              "api/job-status",
+              "api/telegram",
+              "api/github-webhook"
+            ]
+          },
+          {
+            "group": "Package Exports",
+            "pages": [
+              "api/exports/auth",
+              "api/exports/chat",
+              "api/exports/code",
+              "api/exports/config"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "cli/init",
+              "cli/setup",
+              "cli/upgrade",
+              "cli/secrets",
+              "cli/templates"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Git-based autonomous AI agents with full audit trail",
+    "Two-layer architecture: Next.js Event Handler + Docker Agent",
+    "Free compute using GitHub Actions",
+    "Self-modifying through pull requests",
+    "Multi-channel chat support (Web, Telegram)",
+    "Plugin system with skills",
+    "Scheduled cron jobs and webhook triggers",
+    "Interactive code workspaces with browser terminal",
+    "Multiple LLM provider support (Anthropic, OpenAI, Google, Custom)"
+  ],
+  "publicApiSurface": [
+    "POST /api/create-job - Create an agent job",
+    "GET /api/job-status - Check job status",
+    "GET /api/job-log - Fetch job logs",
+    "POST /api/telegram/register - Register Telegram webhook",
+    "POST /api/telegram/webhook - Telegram webhook handler",
+    "POST /api/github/webhook - GitHub webhook handler",
+    "GET /api/ping - Health check",
+    "thepopebot/api - API route handlers",
+    "thepopebot/auth - NextAuth configuration and helpers",
+    "thepopebot/auth/actions - Authentication server actions",
+    "thepopebot/auth/components - Authentication UI components",
+    "thepopebot/chat - Chat UI components",
+    "thepopebot/chat/actions - Chat server actions",
+    "thepopebot/chat/api - Chat streaming API handler",
+    "thepopebot/code - Code workspace components and actions",
+    "thepopebot/code/actions - Code workspace server actions",
+    "thepopebot/code/ws-proxy - WebSocket proxy for terminal",
+    "thepopebot/config - Next.js configuration wrapper",
+    "thepopebot/db - Database schema and utilities",
+    "thepopebot/middleware - Authentication middleware",
+    "thepopebot/voice - Voice interface components and actions",
+    "thepopebot/cluster - Cluster management components and actions",
+    "CLI: init - Scaffold new project",
+    "CLI: setup - Interactive setup wizard",
+    "CLI: upgrade - Upgrade to new version",
+    "CLI: setup-telegram - Configure Telegram",
+    "CLI: reset-auth - Regenerate AUTH_SECRET",
+    "CLI: diff - Compare templates",
+    "CLI: reset - Restore templates",
+    "CLI: set-agent-secret - Set GitHub secrets",
+    "CLI: set-agent-llm-secret - Set LLM secrets",
+    "CLI: set-var - Set GitHub variables"
+  ]
+}
