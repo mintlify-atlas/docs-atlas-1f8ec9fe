@@ -1,97 +1,137 @@
----
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
----
+<div className="relative overflow-hidden bg-gradient-to-br from-[#df4234] via-[#2a3098] to-[#f3ecef] dark:from-[#0f1117] dark:via-[#1a1d27] dark:to-[#242838]">
+  <div className="absolute inset-0 bg-black/40 dark:bg-black/60"></div>
+  <div className="relative max-w-7xl mx-auto px-6 py-20 sm:py-24 lg:py-32">
+    <div className="text-center">
+      <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold text-white mb-6">
+        The Repository <span className="text-[#f3ecef]">IS</span> the Agent
+      </h1>
+      <p className="text-base sm:text-lg md:text-xl text-white/90 max-w-2xl mx-auto mb-8">
+        Build autonomous AI agents that evolve through git commits. Every action is auditable, every change is reversible. Free compute with GitHub Actions built-in.
+      </p>
+      <div className="flex flex-wrap gap-4 justify-center">
+        <a href="/quickstart" className="inline-block px-8 py-3 bg-[#ff6f61] hover:bg-[#e05a4d] text-white font-semibold rounded-lg transition-colors">
+          Get Started
+        </a>
+        <a href="/architecture" className="inline-block px-8 py-3 border border-white/30 bg-white/10 hover:bg-white/20 text-white font-semibold rounded-lg transition-colors backdrop-blur-sm">
+          Learn the Architecture
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
 
-## Setting up
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-3">Quick Start</h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">Get your autonomous AI agent running in minutes</p>
+  
+  <Steps>
+    <Step title="Create a new project">
+      Initialize a new thepopebot project in an empty directory:
+      
+      ```bash
+      mkdir my-agent && cd my-agent
+      npx thepopebot@latest init
+      ```
+    </Step>
+    
+    <Step title="Run the setup wizard">
+      The interactive wizard configures everything — GitHub repo, API keys, secrets, and Docker:
+      
+      ```bash
+      npm run setup
+      ```
+      
+      <Note>
+        The setup wizard will:
+        - Create a GitHub repository and push your initial commit
+        - Generate a GitHub Personal Access Token
+        - Collect API keys (Anthropic required; OpenAI, Brave optional)
+        - Set up GitHub secrets and variables
+        - Build and start Docker containers
+      </Note>
+    </Step>
+    
+    <Step title="Start building">
+      Visit your APP_URL to chat with your agent, create jobs, and watch it modify its own code through pull requests.
+      
+      Your agent is now live and can work 24/7 using free GitHub Actions compute.
+    </Step>
+  </Steps>
+</div>
 
-Get your documentation site up and running in minutes.
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-3">Why The Pope Bot?</h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">A new approach to autonomous AI agents</p>
+  
+  <CardGroup cols={3}>
+    <Card title="Git-Native Architecture" icon="git-alt" href="/architecture">
+      Every action your agent takes is a git commit. See exactly what it did, when, and why. Revert mistakes instantly.
+    </Card>
+    <Card title="Free Cloud Compute" icon="server" href="/docker-agent">
+      Uses GitHub Actions for agent jobs. Run one task or a hundred in parallel — the compute is already included with your GitHub account.
+    </Card>
+    <Card title="Self-Evolving" icon="arrows-rotate" href="/advanced/auto-merge">
+      The agent modifies its own code through pull requests. Every change is auditable and reversible. You stay in control.
+    </Card>
+  </CardGroup>
+</div>
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-3">Explore Documentation</h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">Everything you need to build, configure, and deploy your agent</p>
+  
+  <CardGroup cols={2}>
+    <Card title="Core Concepts" icon="book-open" href="/architecture">
+      Understand the two-layer architecture: Event Handler + Docker Agent
+    </Card>
+    <Card title="Configuration" icon="gear" href="/configuration/environment">
+      Configure environment variables, personality, cron jobs, and webhooks
+    </Card>
+    <Card title="Chat Integrations" icon="comments" href="/chat/web-interface">
+      Connect to web chat, Telegram, or build your own channel adapter
+    </Card>
+    <Card title="Skills System" icon="puzzle-piece" href="/skills-system">
+      Extend your agent's capabilities with the plugin system
+    </Card>
+    <Card title="API Reference" icon="code" href="/api/overview">
+      Complete API documentation for all endpoints and package exports
+    </Card>
+    <Card title="CLI Commands" icon="terminal" href="/cli/init">
+      Command-line tools for setup, upgrades, and secrets management
+    </Card>
+  </CardGroup>
+</div>
 
-## Make it yours
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-3">Key Features</h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">Built for developers who want full control and transparency</p>
+  
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div className="p-6 border border-gray-200 dark:border-[#27272a] rounded-lg bg-white dark:bg-[#1a1d27]">
+      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Multi-Channel Support</h3>
+      <p className="text-sm text-gray-600 dark:text-gray-400">Web chat interface, Telegram bot, or custom channel adapters</p>
+    </div>
+    <div className="p-6 border border-gray-200 dark:border-[#27272a] rounded-lg bg-white dark:bg-[#1a1d27]">
+      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Scheduled Jobs</h3>
+      <p className="text-sm text-gray-600 dark:text-gray-400">Cron jobs and webhook triggers for automated workflows</p>
+    </div>
+    <div className="p-6 border border-gray-200 dark:border-[#27272a] rounded-lg bg-white dark:bg-[#1a1d27]">
+      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Code Workspaces</h3>
+      <p className="text-sm text-gray-600 dark:text-gray-400">Interactive Docker containers with in-browser terminal</p>
+    </div>
+    <div className="p-6 border border-gray-200 dark:border-[#27272a] rounded-lg bg-white dark:bg-[#1a1d27]">
+      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Multiple LLM Providers</h3>
+      <p className="text-sm text-gray-600 dark:text-gray-400">Anthropic, OpenAI, Google, or custom provider support</p>
+    </div>
+  </div>
+</div>
 
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
-  </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
-  </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
-  </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
-  </Card>
-</Columns>
-
-## Create beautiful pages
-
-Everything you need to create world-class documentation.
-
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
-
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<div className="mt-20 mb-16 max-w-5xl mx-auto px-6">
+  <div className="p-8 bg-gradient-to-r from-[#df4234] to-[#2a3098] dark:from-[#1a1d27] dark:to-[#242838] rounded-2xl border border-gray-200 dark:border-[#27272a]">
+    <h2 className="text-2xl font-bold text-white mb-2">Ready to Build Your Agent?</h2>
+    <p className="text-white/90 mb-6">Start with our quickstart guide and have your first autonomous agent running in under 10 minutes.</p>
+    <a href="/quickstart" className="inline-block px-8 py-3 bg-white text-[#df4234] font-semibold rounded-lg hover:bg-gray-100 transition-colors">
+      Get Started Now
+    </a>
+  </div>
+</div>

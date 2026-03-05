@@ -1,0 +1,227 @@
+---
+title: 'thepopebot/config'
+description: 'Next.js configuration wrapper and instrumentation'
+---
+
+## Overview
+
+The `thepopebot/config` export provides Next.js configuration helpers and server initialization hooks.
+
+## thepopebot/config
+
+Next.js config wrapper with framework-specific settings.
+
+### Import
+
+```javascript
+import { withThepopebot } from 'thepopebot/config';
+```
+
+### Function
+
+<ParamField path="withThepopebot" type="function">
+  Wraps user's Next.js config with Pope Bot framework requirements
+</ParamField>
+
+**Usage in `next.config.mjs`:**
+
+```javascript
+import { withThepopebot } from 'thepopebot/config';
+
+export default withThepopebot({
+  // Your custom Next.js config
+});
+```
+
+### What It Does
+
+1. **Enables instrumentation** - Allows server startup hooks for cron scheduling
+2. **Transpiles package** - Ensures `thepopebot` package is bundled correctly
+3. **Sets environment variables** - Exposes feature flags to browser
+4. **Configures SQLite** - Marks database packages as server-external
+5. **Custom build directory** - Respects `NEXT_BUILD_DIR` env var
+
+```javascript
+export function withThepopebot(nextConfig = {}) {
+  return {
+    ...nextConfig,
+    distDir: process.env.NEXT_BUILD_DIR || '.next',
+    transpilePackages: [
+      'thepopebot',
+      ...(nextConfig.transpilePackages || []),
+    ],
+    env: {
+      ...nextConfig.env,
+      NEXT_PUBLIC_CODE_WORKSPACE: process.env.CLAUDE_CODE_OAUTH_TOKEN && process.env.BETA ? 'true' : '',
+      NEXT_PUBLIC_VOICE_ENABLED: process.env.ASSEMBLYAI_API_KEY ? 'true' : '',
+    },
+    serverExternalPackages: [
+      ...(nextConfig.serverExternalPackages || []),
+      'better-sqlite3',
+      'drizzle-orm',
+    ],
+  };
+}
+```
+
+### Configuration Options
+
+<ParamField path="distDir" type="string">
+  Build output directory (default: `.next`, override with `NEXT_BUILD_DIR`)
+</ParamField>
+
+<ParamField path="transpilePackages" type="array">
+  Adds `thepopebot` to package transpilation list
+</ParamField>
+
+<ParamField path="env.NEXT_PUBLIC_CODE_WORKSPACE" type="string">
+  Set to `'true'` if code workspaces are enabled (requires `CLAUDE_CODE_OAUTH_TOKEN` + `BETA`)
+</ParamField>
+
+<ParamField path="env.NEXT_PUBLIC_VOICE_ENABLED" type="string">
+  Set to `'true'` if voice features are enabled (requires `ASSEMBLYAI_API_KEY`)
+</ParamField>
+
+<ParamField path="serverExternalPackages" type="array">
+  Marks `better-sqlite3` and `drizzle-orm` as external (prevents bundling issues)
+</ParamField>
+
+## thepopebot/instrumentation
+
+Server startup hook for initializing cron jobs and database.
+
+### Import
+
+```javascript
+import { register } from 'thepopebot/instrumentation';
+```
+
+### Function
+
+<ParamField path="register" type="function">
+  Called once when Next.js server starts. Initializes database, loads environment, starts cron scheduler.
+</ParamField>
+
+**Usage in `instrumentation.js`:**
+
+```javascript
+import { register } from 'thepopebot/instrumentation';
+export { register };
+```
+
+### What It Does
+
+1. **Loads `.env`** - Ensures environment variables are available
+2. **Initializes database** - Creates SQLite tables if needed
+3. **Starts cron scheduler** - Loads `config/CRONS.json` and schedules jobs
+
+```javascript
+import 'dotenv/config';
+import { initDatabase } from '../lib/db/index.js';
+import { startCron } from '../lib/cron.js';
+
+export async function register() {
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    initDatabase();
+    startCron();
+  }
+}
+```
+
+### Runtime Guard
+
+Only runs in Node.js runtime (skips Edge runtime):
+
+```javascript
+if (process.env.NEXT_RUNTIME === 'nodejs') {
+  // Server initialization
+}
+```
+
+## Environment Variables
+
+The config module reads these variables:
+
+<ParamField path="NEXT_BUILD_DIR" type="string" optional>
+  Custom build output directory (default: `.next`)
+</ParamField>
+
+<ParamField path="CLAUDE_CODE_OAUTH_TOKEN" type="string" optional>
+  Enables code workspace feature when combined with `BETA=true`
+</ParamField>
+
+<ParamField path="BETA" type="string" optional>
+  Set to `true` to enable beta features (code workspaces)
+</ParamField>
+
+<ParamField path="ASSEMBLYAI_API_KEY" type="string" optional>
+  Enables voice features when present
+</ParamField>
+
+## Why Instrumentation?
+
+Next.js 15+ supports [instrumentation hooks](https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation) for server startup. This is the cleanest way to:
+
+- Load cron jobs before handling requests
+- Initialize database schema atomically
+- Avoid race conditions from multiple workers
+
+## Cron Scheduling
+
+The `register()` function calls `startCron()`, which:
+
+1. Reads `config/CRONS.json`
+2. Parses cron expressions via `node-cron`
+3. Schedules tasks (agent jobs, commands, webhooks)
+4. Runs continuously in background
+
+See [Cron Jobs](/guides/cron-jobs) for scheduling details.
+
+## Database Initialization
+
+Calls `initDatabase()` from `lib/db/index.js`:
+
+1. Connects to SQLite (`data/thepopebot.sqlite`)
+2. Runs migrations from `drizzle/` directory
+3. Creates tables if they don't exist
+4. Returns database connection
+
+Database path can be overridden with `DATABASE_PATH` env var.
+
+## Example Setup
+
+**next.config.mjs:**
+
+```javascript
+import { withThepopebot } from 'thepopebot/config';
+
+export default withThepopebot({
+  images: {
+    domains: ['your-cdn.com'],
+  },
+});
+```
+
+**instrumentation.js:**
+
+```javascript
+import { register } from 'thepopebot/instrumentation';
+export { register };
+```
+
+**File structure:**
+
+```
+your-project/
+├── next.config.mjs          # Uses withThepopebot()
+├── instrumentation.js       # Exports register()
+├── .env                     # Environment variables
+└── config/
+    └── CRONS.json           # Scheduled jobs
+```
+
+## Related
+
+- [Cron Jobs](/guides/cron-jobs) - Scheduled task configuration
+- [Database Schema](/guides/database) - SQLite structure and migrations
+- Next.js [Instrumentation](https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation) docs

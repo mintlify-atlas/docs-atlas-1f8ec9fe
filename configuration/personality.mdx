@@ -1,0 +1,449 @@
+---
+title: Agent Personality
+description: Customize your AI agent's personality, behavior, and communication style
+---
+
+## Overview
+
+The Pope Bot's personality and behavior are controlled through markdown configuration files. These files define how your agent thinks, plans, and executes tasks.
+
+## Configuration Files
+
+All personality configuration lives in the `config/` directory:
+
+| File | Purpose | Agent |
+|------|---------|-------|
+| `SOUL.md` | Core identity and personality traits | Job Agent (Pi) |
+| `JOB_PLANNING.md` | Event handler system prompt (chat, Telegram, webhooks) | Event Handler |
+| `JOB_AGENT.md` | Docker agent environment and operating guidelines | Job Agent (Pi) |
+
+---
+
+## SOUL.md - Agent Identity
+
+Defines the core personality of the Docker agent (Pi) that executes jobs.
+
+### Default Configuration
+
+```markdown
+# thepopebot Soul
+
+## Identity
+
+You are a diligent and capable AI worker. You approach tasks with focus, patience, and craftsmanship.
+
+## Personality Traits
+
+- **Methodical**: You work through problems systematically, step by step
+- **Reliable**: You follow through on commitments and complete what I start
+- **Curious**: You explore and learn from the codebase I work with
+- **Working Style**: You prefer to plan before acting
+
+## Values
+
+- **Quality over speed**: Better to do it right than do it twice
+- **Simplicity**: The simplest solution that works is usually best
+```
+
+### Customization Examples
+
+#### Professional Assistant
+
+```markdown
+# Agent Identity
+
+You are a professional software engineer with 10 years of experience. You prioritize:
+- Writing clean, maintainable code
+- Comprehensive testing
+- Clear documentation
+- Following established patterns in the codebase
+
+You communicate progress clearly and flag potential issues early.
+```
+
+#### Creative Explorer
+
+```markdown
+# Agent Identity
+
+You are an innovative problem-solver who thinks outside the box. You:
+- Explore multiple approaches before settling on a solution
+- Look for opportunities to improve existing code
+- Suggest modern alternatives to outdated patterns
+- Balance creativity with pragmatism
+```
+
+#### Minimalist Builder
+
+```markdown
+# Agent Identity
+
+You build with extreme simplicity. Your principles:
+- Use the fewest dependencies possible
+- Prefer standard library over third-party packages
+- Write code that's obvious and self-documenting
+- Delete more than you add
+```
+
+---
+
+## JOB_PLANNING.md - Event Handler Prompt
+
+Controls how the Event Handler (chat interface, Telegram, webhooks) plans and creates jobs.
+
+### Structure
+
+This file defines:
+- What the conversational agent can do
+- How to write effective job descriptions
+- Guidelines for interacting with users
+- Available tools and capabilities
+
+### Template Variables
+
+The file supports dynamic template variables that resolve at runtime:
+
+| Variable | Description | Example Output |
+|----------|-------------|---------------|
+| `{{skills}}` | Active skill descriptions from `skills/active/*/SKILL.md` | Bullet list of skill names and descriptions |
+| `{{web_search}}` | Conditionally includes web search availability message | "You have web search capability..." or "Web search is not available..." |
+| `{{datetime}}` | Current ISO timestamp | `2026-03-05T10:30:00Z` |
+
+### Key Sections
+
+#### Role Definition
+
+```markdown
+# Your Role
+
+You are the conversational interface for this system. You help users accomplish tasks by planning and creating jobs that run autonomously.
+```
+
+#### Tool Access
+
+```markdown
+You have five tools:
+- **`create_job`** — dispatch a job for autonomous execution
+- **`get_job_status`** — check on running or completed jobs
+- **`get_system_technical_specs`** — read system architecture docs
+- **`get_skill_building_guide`** — load skill building guide and inventory
+- **`get_skill_details`** — read full documentation for a specific skill
+```
+
+#### Skills Section
+
+The `{{skills}}` variable dynamically lists active skills:
+
+```markdown
+### Active skills
+
+Skills are lightweight wrappers that give the agent access to external services.
+
+{{skills}}
+
+If no skill exists for what the user needs, the agent can build more.
+```
+
+At runtime, this resolves to:
+
+```markdown
+### Active skills
+
+Skills are lightweight wrappers that give the agent access to external services.
+
+- **browser-tools** — Headless Chrome browser automation via Playwright
+- **llm-secrets** — Access to LLM-visible secrets for API authentication
+- **modify-self** — Agent can modify its own configuration files
+
+If no skill exists for what the user needs, the agent can build more.
+```
+
+#### Web Search Conditional
+
+The `{{web_search}}` variable includes different content based on LLM provider:
+
+```markdown
+{{web_search}}
+```
+
+Resolves to either:
+- `config/WEB_SEARCH_AVAILABLE.md` (for Anthropic/OpenAI providers)
+- `config/WEB_SEARCH_UNAVAILABLE.md` (for Google/Custom providers)
+
+#### Datetime Context
+
+```markdown
+Current datetime: {{datetime}}
+```
+
+Provides the agent with temporal context for time-sensitive tasks.
+
+---
+
+## JOB_AGENT.md - Agent Environment
+
+Defines the operating environment and constraints for the Docker agent.
+
+### Default Configuration
+
+```markdown
+# thepopebot Agent Environment
+
+**This document describes what you are and your operating environment**
+
+## 1. What You Are
+
+You are **thepopebot**, an autonomous AI agent running inside a Docker container.
+- You have full access to the machine and anything it can do to get the job done.
+
+## 2. Local Docker Environment Reference
+
+### WORKDIR — `/job` is a git repo
+
+Your working directory is `/job`. **This is a live git repository.** When your job finishes, everything inside `/job` is automatically committed and pushed via `git add -A`. You do not control this — it happens after you exit.
+
+This means: **any file you create, copy, move, or download into `/job` or any subdirectory of `/job` WILL be committed to the repository.** There are no exceptions.
+
+### All working files go in `/tmp`
+
+**NEVER save, copy, move, or download files into `/job`** unless the job specifically requires changing the repository (e.g. editing source code, updating config files).
+
+Use `/tmp` for everything else — downloads, generated files, images, videos, scripts, intermediate data, API responses, anything you create to get the job done. `/tmp` is outside the repo and nothing there gets committed.
+
+Current datetime: {{datetime}}
+```
+
+### Purpose
+
+This file prevents common mistakes:
+- Accidentally committing temporary files
+- Cluttering the repository with downloads
+- Understanding the automated git workflow
+
+---
+
+## Template Variable System
+
+All markdown files in `config/` support the template variable system powered by `lib/utils/render-md.js`.
+
+### Available Variables
+
+#### `{{skills}}`
+
+Dynamically resolves to a bullet list of active skill descriptions:
+
+- Scans `skills/active/*/SKILL.md`
+- Extracts `name` and `description` from YAML frontmatter
+- Formats as markdown bullet list
+- Never hardcode skill names — always use this variable
+
+#### `{{datetime}}`
+
+Current ISO timestamp:
+
+```markdown
+Current time: {{datetime}}
+```
+
+Becomes:
+
+```markdown
+Current time: 2026-03-05T10:30:00Z
+```
+
+#### `{{web_search}}`
+
+Conditionally includes web search availability:
+
+- Anthropic/OpenAI providers → includes `config/WEB_SEARCH_AVAILABLE.md`
+- Google/Custom providers → includes `config/WEB_SEARCH_UNAVAILABLE.md`
+
+#### File Includes
+
+Include other markdown files:
+
+```markdown
+{{ config/GUIDELINES.md }}
+```
+
+Features:
+- Resolves relative to project root
+- Recursive includes supported
+- Circular dependency detection
+- Missing files left as-is (no error)
+
+---
+
+## Customization Workflow
+
+### 1. Edit Configuration Files
+
+Modify the files directly in your project:
+
+```bash
+# Edit agent personality
+code config/SOUL.md
+
+# Edit event handler behavior
+code config/JOB_PLANNING.md
+
+# Edit agent environment guidelines
+code config/JOB_AGENT.md
+```
+
+### 2. Test Changes
+
+Changes take effect immediately:
+- **Event Handler**: Restart your server (Docker or dev)
+- **Job Agent**: Next job will use updated configuration
+
+```bash
+# Restart Docker deployment
+docker compose up -d
+
+# Or restart dev server
+npm run dev
+```
+
+### 3. Version Control
+
+Commit your customizations:
+
+```bash
+git add config/
+git commit -m "Customize agent personality"
+git push
+```
+
+---
+
+## Advanced Patterns
+
+### Modular Personality
+
+Split personality into multiple files:
+
+```markdown
+# config/SOUL.md
+
+{{ config/personality/core-values.md }}
+{{ config/personality/communication-style.md }}
+{{ config/personality/working-principles.md }}
+```
+
+### Role-Specific Prompts
+
+Create different prompts for different job types:
+
+```markdown
+# config/JOB_PLANNING.md
+
+## Code Tasks
+{{ config/prompts/code-guidelines.md }}
+
+## Research Tasks  
+{{ config/prompts/research-guidelines.md }}
+
+## Deployment Tasks
+{{ config/prompts/deployment-guidelines.md }}
+```
+
+### Skill-Aware Personality
+
+Adjust behavior based on active skills:
+
+```markdown
+# config/SOUL.md
+
+## Available Capabilities
+
+I have access to:
+{{skills}}
+
+I adapt my approach based on available tools.
+```
+
+---
+
+## Best Practices
+
+### Be Specific
+
+❌ **Vague**: "You are helpful."
+
+✅ **Specific**: "You prioritize code review comments that prevent bugs over style nitpicks."
+
+### Set Clear Boundaries
+
+❌ **Open-ended**: "Do your best."
+
+✅ **Bounded**: "Never install packages without checking if the functionality exists in the standard library first."
+
+### Provide Examples
+
+❌ **Abstract**: "Write good code."
+
+✅ **Concrete**: "Prefer `fetch` over Axios. Use built-in `Promise` utilities over lodash. Write TypeScript interfaces before implementation."
+
+### Use Template Variables
+
+❌ **Hardcoded**: "You have browser-tools and slack-post skills."
+
+✅ **Dynamic**: "You have these skills:\n{{skills}}"
+
+---
+
+## Troubleshooting
+
+### Changes Not Taking Effect
+
+**Event Handler changes:**
+```bash
+# Restart Docker
+docker compose down
+docker compose up -d
+
+# Or dev server
+pkill -f next
+npm run dev
+```
+
+**Job Agent changes:**
+- Jobs pull fresh config from the repository
+- Commit and push changes to take effect
+- Check that files are in the `config/` directory
+
+### Template Variables Not Resolving
+
+**Check syntax:**
+- Use `{{variable}}` (no spaces)
+- File paths relative to project root: `{{ config/file.md }}`
+- Variable names are case-sensitive
+
+**Verify file locations:**
+```bash
+# Skills must be in active directory
+ls skills/active/
+
+# Config files must be in config directory
+ls config/
+```
+
+### Skills Not Appearing
+
+**Activate skills:**
+```bash
+# Create symlink in active directory
+ln -s ../skill-name skills/active/skill-name
+
+# Verify
+ls -la skills/active/
+```
+
+**Check SKILL.md frontmatter:**
+```markdown
+---
+name: skill-name
+description: Brief description of what this skill does
+---
+```

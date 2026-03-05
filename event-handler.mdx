@@ -1,0 +1,390 @@
+---
+title: Event Handler
+description: Deep dive into the Event Handler layer - API routes, chat interfaces, and job orchestration
+---
+
+The Event Handler is a Next.js application that orchestrates all interactions with your agent. It handles incoming requests from multiple channels (web chat, Telegram, webhooks), creates jobs, manages authentication, and coordinates with GitHub Actions.
+
+## Core Responsibilities
+
+- **Multi-channel chat** - Web UI and Telegram bot integration
+- **Job creation** - Generates job branches and triggers GitHub Actions
+- **Webhook handling** - Receives notifications from GitHub, Telegram, external services
+- **Cron scheduling** - Runs recurring tasks via `node-cron`
+- **Authentication** - NextAuth v5 for web UI, API keys for external callers
+- **LLM integration** - Real-time chat responses using multiple providers
+
+## Deployment Model
+
+The Event Handler runs as a long-lived Docker container:
+
+- Installs the published `thepopebot` npm package
+- User project files (`config/`, `skills/`, `.env`, `data/`) are volume-mounted at `/app`
+- Runs `server.js` via PM2 process manager
+- Sits behind Traefik reverse proxy for HTTPS
+
+<Note>
+All event handler logic lives in the npm package (`api/`, `lib/`, `config/`). The user's project contains only configuration files and thin Next.js wiring that imports from `thepopebot/*`.
+</Note>
+
+## API Endpoints
+
+All routes are served through a catch-all route (`app/api/[...thepopebot]/route.js`) that re-exports handlers from `thepopebot/api`.
+
+### Routes Reference
+
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|----------|
+| `/api/ping` | GET | None | Health check, returns `{"message": "Pong!"}` |
+| `/api/create-job` | POST | x-api-key | Generic webhook for job creation |
+| `/api/telegram/webhook` | POST | Webhook secret | Telegram bot webhook |
+| `/api/telegram/register` | POST | x-api-key | Register Telegram webhook URL |
+| `/api/github/webhook` | POST | Webhook secret | GitHub Actions notifications |
+| `/api/jobs/status` | GET | x-api-key | Check job status |
+
+### Authentication Patterns
+
+<AccordionGroup>
+  <Accordion title="/api routes - External callers only">
+    API routes authenticate via `x-api-key` header or webhook secrets (Telegram, GitHub). API keys are stored in SQLite and managed through the admin UI — they are NOT environment variables.
+
+    ```javascript
+    // Check API key against database
+    const apiKey = request.headers.get('x-api-key');
+    const record = verifyApiKey(apiKey);
+    if (!record) {
+      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Server Actions - Browser UI only">
+    All authenticated browser-to-server calls use Next.js Server Actions (`'use server'` functions) with `requireAuth()` session validation. Never use `/api` fetch calls from browser UI.
+
+    ```javascript
+    'use server'
+    import { requireAuth } from 'thepopebot/lib/auth';
+
+    export async function createMessage(content) {
+      const session = await requireAuth();
+      // ... create message
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Chat streaming - Dedicated route">
+    The AI SDK's `DefaultChatTransport` requires an HTTP endpoint. Chat has its own route handler at `/stream/chat` with session auth (outside `/api`).
+
+    | Caller | Mechanism | Auth | Location |
+    |--------|-----------|------|-----------|
+    | External (cURL, GitHub Actions, Telegram) | `/api` route | `x-api-key` or webhook secret | `api/index.js` |
+    | Browser UI (data/mutations) | Server Action | `requireAuth()` session | `lib/chat/actions.js` |
+    | Browser UI (chat streaming) | Dedicated route | `auth()` session | `lib/chat/api.js` |
+  </Accordion>
+</AccordionGroup>
+
+### Example: Create a Job via Webhook
+
+<CodeGroup>
+```bash cURL
+curl -X POST https://your-app-url/api/create-job \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d '{"job": "Update the README with installation instructions"}'
+```
+
+```json Response
+{
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "branch": "job/550e8400-e29b-41d4-a716-446655440000",
+  "title": "Update README with installation instructions"
+}
+```
+</CodeGroup>
+
+## Directory Structure
+
+The Event Handler code lives in the npm package:
+
+```
+thepopebot/
+├── api/
+│   └── index.js                # Route handlers for all /api/* endpoints
+├── lib/
+│   ├── actions.js              # Action executor (agent/command/webhook)
+│   ├── cron.js                 # Cron scheduler
+│   ├── triggers.js             # Webhook trigger middleware
+│   ├── paths.js                # Central path resolver
+│   ├── ai/                     # LLM integration
+│   │   ├── agent.js            # Agent chat loop
+│   │   ├── model.js            # Multi-provider model factory
+│   │   ├── tools.js            # LLM tools (createJob, etc.)
+│   │   └── streaming.js        # Streaming response handler
+│   ├── auth/                   # NextAuth config and components
+│   ├── channels/               # Channel adapters
+│   │   ├── base.js             # Base channel adapter
+│   │   ├── telegram.js         # Telegram adapter
+│   │   └── index.js            # Channel factory
+│   ├── chat/                   # Chat UI and server actions
+│   ├── db/                     # SQLite via Drizzle ORM
+│   │   ├── schema.js           # Database schema
+│   │   ├── api-keys.js         # API key CRUD
+│   │   └── notifications.js    # Notification storage
+│   └── tools/
+│       ├── create-job.js       # Job creation logic
+│       ├── github.js           # GitHub API client
+│       ├── telegram.js         # Telegram API client
+│       └── docker.js           # Docker container management
+└── config/
+    ├── index.js                # withThepopebot() wrapper
+    └── instrumentation.js      # Server startup hook
+```
+
+## Job Creation Flow
+
+When a job is created (via chat, webhook, or cron), the Event Handler:
+
+1. **Generates job metadata**
+   - Creates UUID for the job
+   - Uses LLM to generate a descriptive title (structured output prevents token leaks)
+   - Builds `job.config.json` with title, description, and optional LLM overrides
+
+2. **Creates GitHub branch**
+   - Gets main branch SHA and tree SHA via GitHub API
+   - Creates tree entry for `logs/{uuid}/job.config.json`
+   - Creates commit with message `🤖 Agent Job: {title}`
+   - Creates `job/{uuid}` branch pointing to commit
+
+3. **GitHub Actions takes over**
+   - Branch creation triggers `run-job.yml`
+   - Workflow reads job config, collects secrets, launches Docker agent
+
+<CodeGroup>
+```javascript lib/tools/create-job.js
+async function createJob(jobDescription, options = {}) {
+  const jobId = uuidv4();
+  const branch = `job/${jobId}`;
+  
+  // Generate descriptive title using LLM
+  const title = await generateJobTitle(jobDescription);
+  
+  // Build config with optional overrides
+  const config = { title, job: jobDescription };
+  if (options.llmProvider) config.llm_provider = options.llmProvider;
+  if (options.llmModel) config.llm_model = options.llmModel;
+  if (options.agentBackend) config.agent_backend = options.agentBackend;
+  
+  // Create tree entry
+  const treeEntries = [{
+    path: `logs/${jobId}/job.config.json`,
+    mode: '100644',
+    type: 'blob',
+    content: JSON.stringify(config, null, 2),
+  }];
+  
+  // Create commit and branch via GitHub API
+  const tree = await githubApi(`${repo}/git/trees`, {
+    method: 'POST',
+    body: JSON.stringify({ base_tree: baseTreeSha, tree: treeEntries }),
+  });
+  
+  const commit = await githubApi(`${repo}/git/commits`, {
+    method: 'POST',
+    body: JSON.stringify({
+      message: `🤖 Agent Job: ${title}`,
+      tree: tree.sha,
+      parents: [mainSha],
+    }),
+  });
+  
+  await githubApi(`${repo}/git/refs`, {
+    method: 'POST',
+    body: JSON.stringify({
+      ref: `refs/heads/${branch}`,
+      sha: commit.sha,
+    }),
+  });
+  
+  return { job_id: jobId, branch, title };
+}
+```
+</CodeGroup>
+
+## Action Dispatch System
+
+Both cron jobs and webhook triggers use a shared dispatch system (`lib/actions.js`). Every action has a `type` field:
+
+### Action Types
+
+<CodeGroup>
+```json agent (default)
+{
+  "type": "agent",
+  "job": "Update the README",
+  "llm_provider": "anthropic",
+  "llm_model": "claude-sonnet-4-20250514"
+}
+```
+
+```json command
+{
+  "type": "command",
+  "command": "npm test"
+}
+```
+
+```json webhook
+{
+  "type": "webhook",
+  "url": "https://api.example.com/notify",
+  "method": "POST",
+  "vars": { "status": "complete" }
+}
+```
+</CodeGroup>
+
+| Type | Uses LLM | Runtime | Cost | Use When |
+|------|----------|---------|------|----------|
+| `agent` | Yes | Minutes to hours | LLM API + GitHub Actions | Task needs to think |
+| `command` | No | Milliseconds to seconds | Free (event handler) | Task just needs to do |
+| `webhook` | No | Milliseconds to seconds | Free (event handler) | Call external service |
+
+## Cron Jobs
+
+Defined in `config/CRONS.json`, loaded at startup via `node-cron`:
+
+<CodeGroup>
+```json config/CRONS.json
+[
+  {
+    "name": "Daily standup",
+    "schedule": "0 9 * * 1-5",
+    "enabled": true,
+    "type": "agent",
+    "job": "Review open PRs and create a standup summary",
+    "llm_provider": "anthropic",
+    "llm_model": "claude-sonnet-4-20250514"
+  },
+  {
+    "name": "Run tests",
+    "schedule": "0 */4 * * *",
+    "enabled": true,
+    "type": "command",
+    "command": "npm test"
+  }
+]
+```
+</CodeGroup>
+
+- **`schedule`** - Cron expression (uses `node-cron` syntax)
+- **`type`** - `agent` (creates job), `command` (runs shell command), or `webhook` (HTTP request)
+- **`enabled`** - Set to `false` to disable
+- **LLM overrides** - Optional `llm_provider` and `llm_model` for agent-type jobs
+
+## Webhook Triggers
+
+Defined in `config/TRIGGERS.json`, fire actions when specific endpoints are hit:
+
+<CodeGroup>
+```json config/TRIGGERS.json
+[
+  {
+    "watch_path": "/api/deploy",
+    "actions": [
+      {
+        "type": "agent",
+        "job": "Deploy branch {{body.branch}} to {{body.environment}}"
+      },
+      {
+        "type": "webhook",
+        "url": "https://api.slack.com/webhooks/...",
+        "method": "POST",
+        "vars": { "text": "Deployment started for {{body.branch}}" }
+      }
+    ]
+  }
+]
+```
+</CodeGroup>
+
+### Template Variables
+
+Triggers support template tokens in `job` and `command` strings:
+
+- `{{body}}` - Full request body as JSON
+- `{{body.field}}` - Specific field from body
+- `{{query}}` - Query params as JSON
+- `{{query.field}}` - Specific query param
+- `{{headers}}` - Request headers as JSON
+- `{{headers.field}}` - Specific header
+
+## LLM Providers
+
+The Event Handler supports multiple LLM providers for chat:
+
+| Provider | `LLM_PROVIDER` | Default Model | Required Env |
+|----------|----------------|---------------|-------------|
+| Anthropic | `anthropic` (default) | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` |
+| OpenAI | `openai` | `gpt-4o` | `OPENAI_API_KEY` |
+| Google | `google` | `gemini-2.5-pro` | `GOOGLE_API_KEY` |
+| Custom | `custom` | — | `OPENAI_BASE_URL`, `CUSTOM_API_KEY` |
+
+<Note>
+Chat LLM config (`.env`) is separate from agent job config (GitHub variables). They use the same variable names but can hold different values. For example, chat can use Sonnet while jobs use Opus.
+</Note>
+
+## Channel Adapters
+
+The Event Handler uses a channel adapter pattern to normalize messages from different platforms:
+
+<CodeGroup>
+```javascript lib/channels/telegram.js
+class TelegramAdapter extends BaseAdapter {
+  async receive(request) {
+    const body = await request.json();
+    if (!body.message?.text) return null;
+    
+    return {
+      threadId: `telegram_${body.message.chat.id}`,
+      text: body.message.text,
+      attachments: [],
+      metadata: { chatId: body.message.chat.id, messageId: body.message.message_id }
+    };
+  }
+  
+  async sendResponse(threadId, content, metadata) {
+    await sendTelegramMessage(this.botToken, metadata.chatId, content);
+  }
+}
+```
+</CodeGroup>
+
+Adapters normalize:
+- Message format (text, attachments, metadata)
+- Thread IDs (for conversation continuity)
+- Acknowledgements (typing indicators, read receipts)
+- Response delivery
+
+## Database
+
+SQLite via Drizzle ORM at `data/thepopebot.sqlite`:
+
+- **API keys** - Hashed, timing-safe comparison
+- **Messages** - Thread-based storage for chat history
+- **Notifications** - Job completion/failure notifications
+- **Workspaces** - Code workspace metadata
+
+<Warning>
+All schema changes MUST go through migrations. Never write raw DDL SQL. Always edit `lib/db/schema.js` then run `npm run db:generate`.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Agent" icon="docker" href="/docker-agent">
+    Learn how jobs execute in isolated containers
+  </Card>
+  <Card title="Skills System" icon="puzzle-piece" href="/skills-system">
+    Extend your agent with custom skills
+  </Card>
+</CardGroup>

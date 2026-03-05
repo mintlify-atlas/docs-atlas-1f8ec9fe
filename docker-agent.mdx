@@ -1,0 +1,388 @@
+---
+title: Docker Agent
+description: How jobs execute in isolated containers with Pi or Claude Code backends
+---
+
+The Docker Agent is an ephemeral container that clones a job branch, executes the task autonomously, commits results, and creates a pull request. Each job runs in complete isolation with its own environment, preventing state leakage between tasks.
+
+## Agent Backends
+
+The Pope Bot supports two agent backends:
+
+<CardGroup cols={2}>
+  <Card title="Pi Coding Agent" icon="robot">
+    Third-party agent by @mariozechner. Supports multiple LLM providers (Anthropic, OpenAI, Google, custom/local). Uses custom skills system.
+  </Card>
+  <Card title="Claude Code CLI" icon="code">
+    Anthropic's official coding agent. Anthropic models only. Built-in tools (Read, Edit, Bash, Glob, Grep, WebSearch, WebFetch) + MCP support.
+  </Card>
+</CardGroup>
+
+### Comparison Table
+
+| Feature | Pi Coding Agent | Claude Code CLI |
+|---------|----------------|------------------|
+| **LLM Providers** | Anthropic, OpenAI, Google, custom/local | Anthropic only |
+| **Tools** | Custom skills (brave-search, browser-tools, etc.) | Built-in + MCP |
+| **Auth** | API key (pay-per-token) | OAuth token (subscription) or API key |
+| **Billing** | API credits | Pro/Max subscription or API credits |
+| **Choose when** | Non-Anthropic LLMs, custom Pi skills | Subscription billing, official Anthropic tooling |
+
+### Switching Backends
+
+<CodeGroup>
+```bash CLI
+# Switch to Claude Code
+npx thepopebot set-var AGENT_BACKEND claude-code
+
+# Switch to Pi
+npx thepopebot set-var AGENT_BACKEND pi
+```
+
+```bash Setup wizard
+npx thepopebot setup
+# Follow prompts to reconfigure agent backend
+```
+</CodeGroup>
+
+<Info>
+The `AGENT_BACKEND` variable is stored in GitHub repository variables and read by `run-job.yml` to select the correct Docker image.
+</Info>
+
+## Docker Images
+
+All images are tagged `stephengpope/thepopebot:{tag}-{version}`:
+
+| Image | Backend | Purpose |
+|-------|---------|----------|
+| `pi-coding-agent-job` | Pi | Runs Pi agent for job execution |
+| `claude-code-job` | Claude Code | Runs Claude Code CLI for job execution |
+
+Images include:
+- Node.js 22
+- Git + GitHub CLI
+- Agent binary (Pi or Claude Code)
+- Puppeteer + Chromium (for browser-tools skill)
+
+## Container Lifecycle
+
+When `run-job.yml` triggers, the container:
+
+### 1. Environment Setup
+
+<Steps>
+  <Step title="Extract job ID from branch name">
+    ```bash
+    if [[ "$BRANCH" == job/* ]]; then
+        JOB_ID="${BRANCH#job/}"
+    else
+        JOB_ID=$(cat /proc/sys/kernel/random/uuid)
+    fi
+    ```
+  </Step>
+
+  <Step title="Export secrets as environment variables">
+    **Protected secrets** (`AGENT_*`) - Filtered from LLM's bash subprocess:
+    ```bash
+    # GitHub token, Anthropic API key, etc.
+    eval $(echo "$SECRETS" | jq -r 'to_entries | .[] | "export \(.key)=\(.value | @sh)"')
+    ```
+
+    **LLM-accessible secrets** (`AGENT_LLM_*`) - Available to skills:
+    ```bash
+    # Browser passwords, skill API keys, etc.
+    eval $(echo "$LLM_SECRETS" | jq -r 'to_entries | .[] | "export \(.key)=\(.value | @sh)"')
+    ```
+  </Step>
+
+  <Step title="Configure Git credentials">
+    ```bash
+    gh auth setup-git
+    GH_USER_JSON=$(gh api user -q '{name: .name, login: .login, email: .email, id: .id}')
+    GH_USER_NAME=$(echo "$GH_USER_JSON" | jq -r '.name // .login')
+    GH_USER_EMAIL=$(echo "$GH_USER_JSON" | jq -r '.email // "\(.id)+\(.login)@users.noreply.github.com"')
+    git config --global user.name "$GH_USER_NAME"
+    git config --global user.email "$GH_USER_EMAIL"
+    ```
+  </Step>
+
+  <Step title="Clone job branch">
+    ```bash
+    git clone --single-branch --branch "$BRANCH" --depth 1 "$REPO_URL" /job
+    cd /job
+    ```
+  </Step>
+</Steps>
+
+### 2. Skill Preparation
+
+<CodeGroup>
+```bash Install skill dependencies
+for skill_dir in /job/skills/active/*/; do
+    if [ -f "${skill_dir}package.json" ]; then
+        echo "Installing skill deps: $(basename "$skill_dir")"
+        (cd "$skill_dir" && npm install --omit=dev --no-package-lock)
+    fi
+done
+```
+
+```bash Start Chrome (if browser-tools is active)
+CHROME_BIN=$(find /home/agent/.cache/puppeteer -name "chrome" -type f 2>/dev/null | head -1)
+if [ -n "$CHROME_BIN" ]; then
+    $CHROME_BIN --headless --no-sandbox --disable-gpu --remote-debugging-port=9222 2>/dev/null &
+    CHROME_PID=$!
+    sleep 2
+fi
+```
+</CodeGroup>
+
+### 3. System Prompt Construction
+
+The container builds the agent's system prompt from config files:
+
+<CodeGroup>
+```bash Build SYSTEM.md
+SYSTEM_FILES=("SOUL.md" "JOB_AGENT.md")
+> /job/.pi/SYSTEM.md
+for i in "${!SYSTEM_FILES[@]}"; do
+    cat "/job/config/${SYSTEM_FILES[$i]}" >> /job/.pi/SYSTEM.md
+    if [ "$i" -lt $((${#SYSTEM_FILES[@]} - 1)) ]; then
+        echo -e "\n\n" >> /job/.pi/SYSTEM.md
+    fi
+done
+
+# Resolve {{datetime}} variable
+sed -i "s/{{datetime}}/$(date -u +"%Y-%m-%dT%H:%M:%SZ")/g" /job/.pi/SYSTEM.md
+```
+</CodeGroup>
+
+### 4. Job Execution
+
+The container reads job metadata from `job.config.json` and runs the agent:
+
+<CodeGroup>
+```bash Pi Coding Agent
+JOB_CONFIG="/job/logs/${JOB_ID}/job.config.json"
+TITLE=$(jq -r '.title // empty' "$JOB_CONFIG")
+JOB_DESCRIPTION=$(jq -r '.job // empty' "$JOB_CONFIG")
+
+PROMPT="
+
+# Your Job
+
+${JOB_DESCRIPTION}"
+
+LLM_PROVIDER="${LLM_PROVIDER:-anthropic}"
+MODEL_FLAGS="--provider $LLM_PROVIDER"
+if [ -n "$LLM_MODEL" ]; then
+    MODEL_FLAGS="$MODEL_FLAGS --model $LLM_MODEL"
+fi
+
+pi $MODEL_FLAGS -p "$PROMPT" --session-dir "${LOG_DIR}"
+```
+
+```bash Claude Code CLI
+claude code \
+  --dangerously-skip-permissions \
+  --prompt "$PROMPT" \
+  --session-dir "${LOG_DIR}"
+```
+</CodeGroup>
+
+### 5. Commit Strategy
+
+The container commits based on agent exit code:
+
+<CodeGroup>
+```bash Success (exit 0)
+# Commit everything including code changes
+git add -A
+git add -f "${LOG_DIR}"
+git commit -m "🤖 Agent Job: ${TITLE}" || true
+```
+
+```bash Failure (exit != 0)
+# Only commit session logs, not partial code changes
+git reset || true
+git add -f "${LOG_DIR}"
+git commit -m "🤖 Agent Job: ${TITLE} (failed)" || true
+```
+</CodeGroup>
+
+### 6. Pull Request Creation
+
+<Steps>
+  <Step title="Push commits to remote">
+    ```bash
+    git push origin
+    ```
+  </Step>
+
+  <Step title="Capture log commit SHA">
+    ```bash
+    LOG_SHA=$(git rev-parse HEAD)
+    ```
+  </Step>
+
+  <Step title="Remove logs from branch">
+    Logs are removed so they don't merge into main (they're preserved in the log commit):
+    ```bash
+    git rm -rf "${LOG_DIR}"
+    git commit -m "done." || true
+    git push origin
+    ```
+  </Step>
+
+  <Step title="Create PR with log permalink">
+    ```bash
+    REPO_SLUG=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+    LOG_URL="https://github.com/${REPO_SLUG}/tree/${LOG_SHA}/logs/${JOB_ID}"
+    gh pr create --title "🤖 Agent Job: ${TITLE}" \
+      --body "📋 [View Job Logs](${LOG_URL})"$'\n\n---\n\n'"${JOB_DESCRIPTION}" \
+      --base main || true
+    ```
+  </Step>
+</Steps>
+
+## Environment Variables
+
+Passed to the container by `run-job.yml`:
+
+| Variable | Description | Source |
+|----------|-------------|--------|
+| `REPO_URL` | Repository clone URL | `${{ github.server_url }}/${{ github.repository }}.git` |
+| `BRANCH` | Job branch name | `${{ github.ref_name }}` (e.g., `job/550e8400-e29b...`) |
+| `SECRETS` | Protected credentials (JSON) | `AGENT_*` GitHub secrets (filtered from LLM) |
+| `LLM_SECRETS` | LLM-accessible credentials (JSON) | `AGENT_LLM_*` GitHub secrets |
+| `LLM_PROVIDER` | LLM provider | `job.config.json` override or GitHub variable |
+| `LLM_MODEL` | LLM model | `job.config.json` override or GitHub variable |
+| `OPENAI_BASE_URL` | Custom provider base URL | GitHub variable |
+| `AGENT_BACKEND` | Agent backend (`pi` or `claude-code`) | `job.config.json` override or GitHub variable |
+
+### Secret Filtering
+
+Protected secrets (`AGENT_*`) are filtered from the agent's bash environment using Pi's `env-sanitizer` extension:
+
+<CodeGroup>
+```javascript .pi/extensions/env-sanitizer/index.js
+export function bashEnvironmentFilter(environment) {
+  const filtered = { ...environment };
+  
+  // Filter protected secrets (AGENT_* prefix)
+  const protectedKeys = [
+    'GH_TOKEN',
+    'ANTHROPIC_API_KEY',
+    'OPENAI_API_KEY',
+    'GOOGLE_API_KEY',
+    'CUSTOM_API_KEY'
+  ];
+  
+  for (const key of protectedKeys) {
+    delete filtered[key];
+  }
+  
+  return filtered;
+}
+```
+</CodeGroup>
+
+This prevents the agent from accidentally leaking secrets through bash commands like `env` or `echo $GH_TOKEN`.
+
+<Warning>
+LLM-accessible secrets (`AGENT_LLM_*`) are NOT filtered. Only use this prefix for credentials the agent needs to access (browser passwords, skill API keys, etc.).
+</Warning>
+
+## Custom LLM Providers
+
+For OpenAI-compatible endpoints (Ollama, local models, etc.), set `LLM_PROVIDER=custom` and `OPENAI_BASE_URL`:
+
+<CodeGroup>
+```bash Environment
+LLM_PROVIDER=custom
+LLM_MODEL=llama3.2
+OPENAI_BASE_URL=http://localhost:11434/v1
+CUSTOM_API_KEY=not-needed  # Optional, uses dummy if not set
+```
+
+```json Generated models.json
+{
+  "providers": {
+    "custom": {
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "CUSTOM_API_KEY",
+      "models": [{ "id": "llama3.2" }]
+    }
+  }
+}
+```
+</CodeGroup>
+
+## Claude Code OAuth Token
+
+Claude Pro ($20/mo) and Max ($100+/mo) subscribers can use a 1-year OAuth token instead of API credits:
+
+<Steps>
+  <Step title="Install Claude Code CLI">
+    ```bash
+    npm install -g @anthropic-ai/claude-code
+    ```
+  </Step>
+
+  <Step title="Generate token">
+    ```bash
+    claude setup-token
+    # Opens browser for authentication
+    # Token starts with sk-ant-oat01-
+    ```
+  </Step>
+
+  <Step title="Set GitHub secret">
+    ```bash
+    npx thepopebot set-agent-secret CLAUDE_CODE_OAUTH_TOKEN
+    # Paste token when prompted
+    ```
+  </Step>
+</Steps>
+
+<Note>
+Anthropic only allows OAuth tokens with Claude Code, not the Messages API. Your API key is still required for event handler web chat. Pro users may hit usage limits sooner since limits are shared with Claude.ai.
+</Note>
+
+## Session Logs
+
+Each job creates a directory at `logs/{JOB_ID}/` containing:
+
+- `job.config.json` - Job metadata (title, description, LLM overrides)
+- `session-*.jsonl` - Agent session logs (messages, tool calls, responses)
+
+Logs are committed to the job branch, then removed before merging. The PR includes a permalink to the log commit so you can review the agent's actions.
+
+<CodeGroup>
+```json job.config.json
+{
+  "title": "Update README with installation instructions",
+  "job": "Add a detailed installation section to the README...",
+  "llm_provider": "anthropic",
+  "llm_model": "claude-sonnet-4-20250514"
+}
+```
+
+```jsonl session-*.jsonl
+{"type":"message","role":"user","content":"Add a detailed installation section..."}
+{"type":"message","role":"assistant","content":"I'll add an installation section..."}
+{"type":"tool_call","tool":"edit","args":{"path":"README.md","oldString":"...","newString":"..."}}
+{"type":"tool_result","content":"File edited successfully"}
+```
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Skills System" icon="puzzle-piece" href="/skills-system">
+    Extend your agent with custom skills and tools
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Review the complete architecture and job lifecycle
+  </Card>
+</CardGroup>

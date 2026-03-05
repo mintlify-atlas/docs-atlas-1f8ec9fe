@@ -1,0 +1,456 @@
+---
+title: 'Code Workspaces'
+description: 'Interactive Docker containers with in-browser terminals for live coding sessions'
+---
+
+## Overview
+
+Code Workspaces provide interactive Docker containers with in-browser terminals powered by xterm.js, WebSocket, and ttyd. They enable live coding sessions where you can execute commands, run code, and interact with the agent in real-time.
+
+**Key features:**
+
+- **Ephemeral environments** — Each workspace is an isolated Docker container
+- **Browser-based terminal** — Full terminal emulation with xterm.js
+- **WebSocket connection** — Real-time bidirectional communication
+- **Container lifecycle management** — Automatic recovery and cleanup
+- **Session authentication** — Secure access via JWT session tokens
+
+## Architecture
+
+The system consists of several components working together:
+
+```
+Chat Agent's start_coding tool
+  ↓
+createCodeWorkspaceContainer() (lib/tools/docker.js)
+  ↓
+Docker container runs claude-code-workspace image
+  ↓
+ttyd server on port 7681
+  ↓
+Browser navigates to /code/{id}
+  ↓
+TerminalView component (xterm.js)
+  ↓
+WebSocket connection
+  ↓
+ws-proxy.js authenticates and proxies
+  ↓
+ws://{containerName}:7681/ws
+```
+
+## Data Flow
+
+### Container Creation
+
+1. Chat agent calls `start_coding` tool
+2. `createCodeWorkspaceContainer()` in `lib/tools/docker.js` creates a Docker container:
+   - Image: `claude-code-workspace`
+   - Entrypoint: `ttyd bash`
+   - Port: 7681 (WebSocket)
+   - Container name: `code-workspace-{id}`
+3. Container registered in database with user ownership
+4. Browser redirected to `/code/{id}`
+
+### Terminal Connection
+
+1. Browser loads `/code/{id}` page
+2. `TerminalView` component (xterm.js) initializes
+3. Opens WebSocket to `/api/code/ws/{id}`
+4. `ws-proxy.js` handles connection:
+   - Authenticates session
+   - Verifies workspace ownership
+   - Proxies to container WebSocket
+5. Bidirectional WebSocket proxying begins
+6. User can type commands, agent can send output
+
+### Container Recovery
+
+`ensureCodeWorkspaceContainer(id)` in `lib/code/actions.js` handles container state recovery:
+
+1. Inspects container via Docker Engine API (Unix socket)
+2. Determines state: running, stopped, exited, paused, dead, missing
+3. Takes action:
+   - **Running** → Return success
+   - **Stopped/Exited/Paused** → Restart container
+   - **Dead/Missing** → Recreate container
+4. Returns status: `'running'`, `'started'`, `'created'`, `'no_container'`, `'error'`
+
+## WebSocket Authentication
+
+Middleware can't intercept WebSocket upgrades, so `ws-proxy.js` authenticates directly:
+
+### Authentication Flow
+
+1. Reads `authjs.session-token` cookie from HTTP upgrade request headers
+2. Decodes JWT using `next-auth/jwt` `decode()` with `AUTH_SECRET`
+3. Validates session and extracts user ID
+4. Looks up workspace in database
+5. Verifies workspace belongs to authenticated user
+6. Rejects with:
+   - **401** if no valid token
+   - **403** if workspace not found or doesn't belong to user
+7. Proxies WebSocket bidirectionally to `ws://{containerName}:7681/ws`
+
+### Security Considerations
+
+- Session tokens are httpOnly cookies (not accessible to JavaScript)
+- Each workspace has a unique ID (UUID)
+- Ownership verified on every connection
+- WebSocket upgrade is atomic — no race conditions
+
+## Server Actions
+
+All workspace operations use `requireAuth()` with ownership checks:
+
+### Available Actions
+
+```javascript
+import {
+  getCodeWorkspaces,
+  createCodeWorkspace,
+  renameCodeWorkspace,
+  starCodeWorkspace,
+  deleteCodeWorkspace,
+  ensureCodeWorkspaceContainer
+} from 'thepopebot/code'
+```
+
+### Action Details
+
+<AccordionGroup>
+  <Accordion title="getCodeWorkspaces()">
+    **Purpose:** Fetch all workspaces owned by the current user
+    
+    **Returns:** Array of workspace objects
+    
+    ```javascript
+    const workspaces = await getCodeWorkspaces()
+    // [{ id, name, starred, created_at, user_id }]
+    ```
+  </Accordion>
+
+  <Accordion title="createCodeWorkspace(name)">
+    **Purpose:** Create a new code workspace and Docker container
+    
+    **Parameters:**
+    - `name` (string) — Workspace display name
+    
+    **Returns:** Workspace object with ID
+    
+    ```javascript
+    const workspace = await createCodeWorkspace('My Project')
+    // { id: 'uuid', name: 'My Project', ... }
+    ```
+  </Accordion>
+
+  <Accordion title="renameCodeWorkspace(id, name)">
+    **Purpose:** Rename an existing workspace
+    
+    **Parameters:**
+    - `id` (string) — Workspace UUID
+    - `name` (string) — New name
+    
+    ```javascript
+    await renameCodeWorkspace(workspace.id, 'Updated Name')
+    ```
+  </Accordion>
+
+  <Accordion title="starCodeWorkspace(id, starred)">
+    **Purpose:** Toggle workspace starred status
+    
+    **Parameters:**
+    - `id` (string) — Workspace UUID
+    - `starred` (boolean) — Star or unstar
+    
+    ```javascript
+    await starCodeWorkspace(workspace.id, true)
+    ```
+  </Accordion>
+
+  <Accordion title="deleteCodeWorkspace(id)">
+    **Purpose:** Delete workspace and its Docker container
+    
+    **Parameters:**
+    - `id` (string) — Workspace UUID
+    
+    **Behavior:**
+    - Removes database record
+    - Stops and removes Docker container
+    - Deletes all container data
+    
+    ```javascript
+    await deleteCodeWorkspace(workspace.id)
+    ```
+  </Accordion>
+
+  <Accordion title="ensureCodeWorkspaceContainer(id)">
+    **Purpose:** Ensure container is running, restart or recreate if needed
+    
+    **Parameters:**
+    - `id` (string) — Workspace UUID
+    
+    **Returns:** Status object
+    
+    ```javascript
+    const result = await ensureCodeWorkspaceContainer(workspace.id)
+    // { status: 'running' | 'started' | 'created' | 'no_container' | 'error' }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Container Lifecycle
+
+### Creation
+
+```javascript
+import { createCodeWorkspaceContainer } from 'thepopebot/tools/docker'
+
+const container = await createCodeWorkspaceContainer({
+  id: 'uuid',
+  name: 'My Workspace'
+})
+```
+
+Docker container configuration:
+
+```javascript
+{
+  Image: 'claude-code-workspace',
+  name: `code-workspace-${id}`,
+  ExposedPorts: { '7681/tcp': {} },
+  HostConfig: {
+    NetworkMode: 'bridge',
+    AutoRemove: false
+  },
+  Cmd: ['bash']
+}
+```
+
+### States
+
+| State | Description | Action |
+|-------|-------------|--------|
+| **running** | Container is active | None — return success |
+| **stopped** | Container stopped gracefully | Restart container |
+| **exited** | Container exited (error or complete) | Restart container |
+| **paused** | Container paused | Unpause and restart |
+| **dead** | Container is dead (cannot be restarted) | Recreate container |
+| **missing** | Container doesn't exist | Recreate container |
+
+### Recovery
+
+When a user navigates to `/code/{id}`, the page calls `ensureCodeWorkspaceContainer(id)` to guarantee the container is running:
+
+```javascript
+// In the page component
+const { status } = await ensureCodeWorkspaceContainer(workspaceId)
+
+if (status === 'error' || status === 'no_container') {
+  // Show error message
+} else {
+  // Connect WebSocket
+}
+```
+
+### Cleanup
+
+Containers are cleaned up when:
+
+- User deletes the workspace (immediate)
+- Container crashes and is recreated
+- Docker daemon restarts (containers are not set to auto-restart)
+
+## Use Cases
+
+### Interactive Development
+
+**Scenario:** User wants to develop a feature with agent assistance
+
+1. User: "Start a coding workspace for the new API endpoint"
+2. Agent calls `start_coding` tool
+3. Workspace created with full development environment
+4. Agent can run commands, edit files, test code
+5. User can type commands in the terminal
+6. Changes saved to container filesystem
+
+### Debugging Sessions
+
+**Scenario:** User needs help debugging a failing test
+
+1. User shares error message with agent
+2. Agent creates workspace and reproduces the error
+3. Agent runs debugger, inspects variables
+4. Agent identifies root cause
+5. Agent proposes fix and tests it in the workspace
+6. User reviews and approves
+
+### Learning and Tutorials
+
+**Scenario:** User wants to learn a new framework
+
+1. User: "Teach me React hooks with live examples"
+2. Agent creates workspace with React environment
+3. Agent writes example code and runs it
+4. User modifies examples in the terminal
+5. Agent explains behavior and suggests improvements
+6. User experiments with variations
+
+## Technical Details
+
+### Docker Image
+
+The `claude-code-workspace` image includes:
+
+- Node.js runtime
+- Common development tools (git, curl, vim)
+- ttyd (terminal WebSocket server)
+- Bash shell
+
+### ttyd Server
+
+ttyd is a simple command-line tool that shares a terminal over WebSocket:
+
+```bash
+ttyd --port 7681 bash
+```
+
+- Listens on port 7681
+- Exposes WebSocket at `/ws`
+- Streams bash terminal I/O
+
+### xterm.js Integration
+
+The browser terminal uses xterm.js:
+
+```javascript
+import { Terminal } from 'xterm'
+import { FitAddon } from 'xterm-addon-fit'
+
+const terminal = new Terminal()
+const fitAddon = new FitAddon()
+terminal.loadAddon(fitAddon)
+terminal.open(containerRef.current)
+fitAddon.fit()
+
+const ws = new WebSocket(`wss://example.com/api/code/ws/${id}`)
+terminal.onData(data => ws.send(data))
+ws.onmessage = e => terminal.write(e.data)
+```
+
+### WebSocket Proxy
+
+`ws-proxy.js` is a Next.js API route with WebSocket upgrade:
+
+```javascript
+export const config = { api: { bodyParser: false } }
+
+export default async function handler(req, res) {
+  if (req.method !== 'GET') return res.status(405).end()
+  
+  const { id } = req.query
+  const session = await validateSession(req)
+  const workspace = await getWorkspace(id, session.userId)
+  
+  if (!workspace) return res.status(403).end()
+  
+  const wss = new WebSocketServer({ noServer: true })
+  wss.handleUpgrade(req, req.socket, Buffer.alloc(0), ws => {
+    const target = new WebSocket(`ws://code-workspace-${id}:7681/ws`)
+    ws.on('message', data => target.send(data))
+    target.on('message', data => ws.send(data))
+  })
+}
+```
+
+## Troubleshooting
+
+### WebSocket Connection Failed
+
+**Symptoms:** Terminal shows "Connecting..." indefinitely
+
+**Causes:**
+- Container not running
+- Session expired
+- Network connectivity issues
+
+**Solutions:**
+```bash
+# Check container status
+docker ps -a | grep code-workspace
+
+# Restart container
+docker restart code-workspace-{id}
+
+# Check logs
+docker logs code-workspace-{id}
+```
+
+### Container Not Starting
+
+**Symptoms:** `ensureCodeWorkspaceContainer` returns `'error'`
+
+**Causes:**
+- Docker daemon not running
+- Image not pulled
+- Resource constraints
+
+**Solutions:**
+```bash
+# Pull image
+docker pull claude-code-workspace
+
+# Check Docker daemon
+systemctl status docker
+
+# Check resources
+docker system df
+```
+
+### Terminal Freezes
+
+**Symptoms:** Terminal stops responding to input
+
+**Causes:**
+- Container process crashed
+- WebSocket connection dropped
+- Browser tab backgrounded (throttled)
+
+**Solutions:**
+- Refresh the page
+- Check container logs
+- Recreate the workspace
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Name Workspaces Clearly" icon="tag">
+    Use descriptive names like "API Debugging" or "React Tutorial" to easily identify workspaces.
+  </Card>
+  
+  <Card title="Clean Up Unused Workspaces" icon="trash">
+    Delete workspaces when done to free up Docker resources. Each container consumes memory and disk space.
+  </Card>
+  
+  <Card title="Star Important Workspaces" icon="star">
+    Star workspaces you want to keep long-term. Unstarred workspaces can be bulk-deleted.
+  </Card>
+  
+  <Card title="Commit Changes to Git" icon="code-branch">
+    Code in workspaces is ephemeral. Commit changes to Git or copy files out before deleting.
+  </Card>
+</CardGroup>
+
+## Limitations
+
+- **No persistence** — Container filesystem is ephemeral. Use Git or volume mounts for persistence.
+- **No multi-user** — One workspace per user session. Can't share terminals between users.
+- **No clipboard integration** — Copy/paste requires browser permissions and manual selection.
+- **No file upload** — Use `curl` or `git clone` to get files into the container.
+- **Resource limits** — Containers share host resources. Too many workspaces can exhaust memory.
+
+## Related Features
+
+- [Web Interface](/chat/web-interface) — Start coding workspaces from chat
+- [Docker Agent](/docker-agent) — Agent jobs can reference workspace code
+- [Skills](/advanced/building-skills) — Skills can use code workspaces for testing

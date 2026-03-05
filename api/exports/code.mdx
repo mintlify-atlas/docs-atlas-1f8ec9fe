@@ -1,0 +1,253 @@
+---
+title: 'thepopebot/code'
+description: 'Code workspace components and WebSocket proxy'
+---
+
+## Overview
+
+The Pope Bot framework provides code workspace functionality through:
+
+1. **thepopebot/code** - React UI component
+2. **thepopebot/code/actions** - Server actions for workspace management
+3. **thepopebot/code/ws-proxy** - WebSocket authentication proxy
+
+## thepopebot/code
+
+React component for interactive Docker-based code workspaces.
+
+### Import
+
+```javascript
+import { CodePage } from 'thepopebot/code';
+```
+
+### Component
+
+<ParamField path="CodePage" type="React.Component">
+  Full-page code workspace with terminal (xterm.js) and WebSocket connection
+</ParamField>
+
+**Usage in `app/code/[id]/page.js`:**
+
+```javascript
+import { CodePage } from 'thepopebot/code';
+
+export default function WorkspacePage({ params }) {
+  return <CodePage workspaceId={params.id} />;
+}
+```
+
+### Features
+
+- **In-browser terminal** - xterm.js with WebSocket streaming
+- **Container lifecycle** - Auto-start, restart, and recovery
+- **Session-based auth** - WebSocket proxy validates session token
+- **Real-time sync** - Bidirectional terminal I/O over WebSocket
+
+## thepopebot/code/actions
+
+Server actions for workspace CRUD operations.
+
+### Import
+
+```javascript
+import {
+  getCodeWorkspaces,
+  createCodeWorkspace,
+  renameCodeWorkspace,
+  starCodeWorkspace,
+  deleteCodeWorkspace,
+  ensureCodeWorkspaceContainer
+} from 'thepopebot/code/actions';
+```
+
+### Functions
+
+<ParamField path="getCodeWorkspaces" type="function">
+  List all workspaces for current user
+</ParamField>
+
+```javascript
+'use server';
+import { getCodeWorkspaces } from 'thepopebot/code/actions';
+
+export async function loadWorkspaces() {
+  const workspaces = await getCodeWorkspaces();
+  return workspaces;
+}
+```
+
+<ParamField path="createCodeWorkspace" type="function">
+  Create new Docker workspace container
+</ParamField>
+
+```javascript
+import { createCodeWorkspace } from 'thepopebot/code/actions';
+
+const workspace = await createCodeWorkspace({
+  name: 'My Project',
+  repo: 'owner/repo',
+  branch: 'main'
+});
+```
+
+<ParamField path="renameCodeWorkspace" type="function">
+  Update workspace name
+</ParamField>
+
+<ParamField path="starCodeWorkspace" type="function">
+  Toggle workspace star/favorite status
+</ParamField>
+
+<ParamField path="deleteCodeWorkspace" type="function">
+  Delete workspace and stop container
+</ParamField>
+
+<ParamField path="ensureCodeWorkspaceContainer" type="function">
+  Check container state and restart/recreate if needed
+</ParamField>
+
+```javascript
+import { ensureCodeWorkspaceContainer } from 'thepopebot/code/actions';
+
+const { status } = await ensureCodeWorkspaceContainer(workspaceId);
+// status: 'running' | 'started' | 'created' | 'no_container' | 'error'
+```
+
+### Container Recovery
+
+`ensureCodeWorkspaceContainer()` handles container lifecycle:
+
+1. Inspects container state via Docker API
+2. Restarts if stopped/exited/paused
+3. Recreates if dead/missing
+4. Returns status for UI feedback
+
+## thepopebot/code/ws-proxy
+
+WebSocket authentication proxy for terminal connections.
+
+### Import
+
+```javascript
+import { GET } from 'thepopebot/code/ws-proxy';
+```
+
+### Route Handler
+
+<ParamField path="GET" type="function">
+  HTTP upgrade handler for WebSocket connections to code workspaces
+</ParamField>
+
+**Usage in `app/api/ws/code/[id]/route.js`:**
+
+```javascript
+import { GET } from 'thepopebot/code/ws-proxy';
+export { GET };
+```
+
+### Authentication Flow
+
+1. Browser connects to `wss://domain/api/ws/code/{id}`
+2. Proxy reads `authjs.session-token` cookie from upgrade request
+3. Decodes JWT using `next-auth/jwt` with `AUTH_SECRET`
+4. Validates user owns workspace (database lookup)
+5. Returns `401` if no session, `403` if wrong user
+6. Proxies WebSocket to `ws://{containerName}:7681/ws`
+
+```javascript
+import { decode } from 'next-auth/jwt';
+import { getCodeWorkspace } from '../../db/code-workspaces.js';
+
+const cookieHeader = request.headers.get('cookie');
+const sessionToken = parseCookie(cookieHeader, 'authjs.session-token');
+
+if (!sessionToken) {
+  return new Response('Unauthorized', { status: 401 });
+}
+
+const payload = await decode({
+  token: sessionToken,
+  secret: process.env.AUTH_SECRET,
+});
+
+if (!payload?.sub) {
+  return new Response('Unauthorized', { status: 401 });
+}
+
+const workspace = getCodeWorkspace(workspaceId);
+if (!workspace || workspace.user_id !== payload.sub) {
+  return new Response('Forbidden', { status: 403 });
+}
+
+// Proxy WebSocket to container
+const containerWs = new WebSocket(`ws://${containerName}:7681/ws`);
+// Bidirectional streaming...
+```
+
+### Why Not Middleware?
+
+Next.js middleware cannot intercept WebSocket upgrade requests. The proxy handles auth directly by decoding the session cookie.
+
+## Container Architecture
+
+Code workspaces run `claude-code-workspace` Docker image:
+
+- **Base**: Ubuntu with Node.js, Python, Git
+- **Terminal**: ttyd on port 7681 (`/ws` endpoint)
+- **Shell**: bash with full environment
+- **Persistence**: Docker volumes (not ephemeral)
+
+### Container Naming
+
+```javascript
+const containerName = `code-workspace-${workspaceId}`;
+```
+
+### Docker API Access
+
+Server actions communicate with Docker Engine via Unix socket:
+
+```javascript
+const DOCKER_SOCKET = '/var/run/docker.sock';
+
+const response = await fetch(
+  `http://unix:${DOCKER_SOCKET}:/containers/${containerName}/json`,
+  { socketPath: DOCKER_SOCKET }
+);
+```
+
+## Environment Variables
+
+<ParamField path="CLAUDE_CODE_OAUTH_TOKEN" type="string" required>
+  OAuth token for Claude Code integration
+</ParamField>
+
+<ParamField path="BETA" type="string" optional>
+  Set to `true` to enable code workspaces feature
+</ParamField>
+
+<ParamField path="AUTH_SECRET" type="string" required>
+  Secret for JWT session decoding (same as auth module)
+</ParamField>
+
+## Data Flow
+
+1. **Create workspace**: `createCodeWorkspace()` → Docker API creates container
+2. **Browser visits `/code/{id}`**: `CodePage` renders terminal UI
+3. **Terminal connects**: xterm.js opens WebSocket to `/api/ws/code/{id}`
+4. **Proxy authenticates**: Validates session token, checks workspace ownership
+5. **Stream data**: Bidirectional WebSocket proxy to `ttyd` in container
+6. **User types commands**: Streamed to container shell, output streamed back
+
+## Security
+
+- **Session-based auth** - All actions use `requireAuth()` pattern
+- **Ownership checks** - Users can only access their own workspaces
+- **Timing-safe JWT decode** - Prevents timing attacks on session validation
+- **Container isolation** - Each workspace runs in separate Docker container
+
+## Related
+
+- [thepopebot/auth](/api/exports/auth) - Session authentication
+- Docker documentation for container API

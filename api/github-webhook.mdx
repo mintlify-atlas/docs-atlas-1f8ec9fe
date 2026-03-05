@@ -1,0 +1,234 @@
+---
+title: 'POST /api/github/webhook'
+description: 'Receive GitHub webhook events for job completion and PR updates'
+---
+
+## Endpoint
+
+```
+POST /api/github/webhook
+```
+
+Receives webhook events from GitHub when:
+
+- Agent jobs complete (PR created)
+- Jobs fail during execution
+- PRs are merged
+
+## Authentication
+
+**Public endpoint** - Authenticated via GitHub webhook secret.
+
+Does not require `x-api-key` header. Instead, validates `x-github-webhook-secret-token` header against `GH_WEBHOOK_SECRET` environment variable.
+
+```javascript
+const { GH_WEBHOOK_SECRET } = process.env;
+
+if (!GH_WEBHOOK_SECRET || !safeCompare(request.headers.get('x-github-webhook-secret-token'), GH_WEBHOOK_SECRET)) {
+  return Response.json({ error: 'Unauthorized' }, { status: 401 });
+}
+```
+
+## Request Headers
+
+<ParamField header="x-github-webhook-secret-token" type="string" required>
+  GitHub webhook secret (configured in repository settings)
+</ParamField>
+
+## Request Body
+
+GitHub sends webhook payloads with these fields:
+
+<ParamField body="job_id" type="string">
+  Extracted from payload or branch name (`job/{job_id}`)
+</ParamField>
+
+<ParamField body="branch" type="string">
+  Branch name (used to extract `job_id` if not provided)
+</ParamField>
+
+<ParamField body="job" type="string">
+  Original job task prompt
+</ParamField>
+
+<ParamField body="pr_url" type="string">
+  Pull request URL
+</ParamField>
+
+<ParamField body="run_url" type="string">
+  GitHub Actions run URL
+</ParamField>
+
+<ParamField body="status" type="string">
+  Job status: `completed`, `failed`, `merged`
+</ParamField>
+
+<ParamField body="merge_result" type="string">
+  Result of auto-merge attempt
+</ParamField>
+
+<ParamField body="log" type="string" optional>
+  Job execution log (fetched from API if not in payload)
+</ParamField>
+
+<ParamField body="changed_files" type="array">
+  List of files modified by the job
+</ParamField>
+
+<ParamField body="commit_message" type="string">
+  Commit message from the job
+</ParamField>
+
+<ParamField body="commit_sha" type="string">
+  Git commit SHA (used to fetch log if not in payload)
+</ParamField>
+
+## Response
+
+### Success (200)
+
+```json
+{
+  "ok": true,
+  "notified": true
+}
+```
+
+### Skipped (200)
+
+If the webhook is not for a job branch:
+
+```json
+{
+  "ok": true,
+  "skipped": true,
+  "reason": "not a job"
+}
+```
+
+### Unauthorized (401)
+
+```json
+{
+  "error": "Unauthorized"
+}
+```
+
+### Error (500)
+
+```json
+{
+  "error": "Failed to process webhook"
+}
+```
+
+## How It Works
+
+1. GitHub sends webhook event
+2. Server validates `GH_WEBHOOK_SECRET`
+3. Extracts `job_id` from payload or branch name
+4. Fetches job log if not included in payload
+5. Aggregates job results:
+   ```javascript
+   const results = {
+     job: payload.job || '',
+     pr_url: payload.pr_url || payload.run_url || '',
+     run_url: payload.run_url || '',
+     status: payload.status || '',
+     merge_result: payload.merge_result || '',
+     log,
+     changed_files: payload.changed_files || [],
+     commit_message: payload.commit_message || '',
+   };
+   ```
+6. Calls `summarizeJob(results)` to generate AI summary
+7. Creates notification via `createNotification(message, payload)`
+8. Returns success response
+
+```javascript
+async function handleGithubWebhook(request) {
+  const { GH_WEBHOOK_SECRET } = process.env;
+
+  if (!GH_WEBHOOK_SECRET || !safeCompare(request.headers.get('x-github-webhook-secret-token'), GH_WEBHOOK_SECRET)) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const payload = await request.json();
+  const jobId = payload.job_id || extractJobId(payload.branch);
+  if (!jobId) return Response.json({ ok: true, skipped: true, reason: 'not a job' });
+
+  try {
+    let log = payload.log || '';
+    if (!log) {
+      log = await fetchJobLog(jobId, payload.commit_sha);
+    }
+
+    const results = {
+      job: payload.job || '',
+      pr_url: payload.pr_url || payload.run_url || '',
+      run_url: payload.run_url || '',
+      status: payload.status || '',
+      merge_result: payload.merge_result || '',
+      log,
+      changed_files: payload.changed_files || [],
+      commit_message: payload.commit_message || '',
+    };
+
+    const message = await summarizeJob(results);
+    await createNotification(message, payload);
+
+    console.log(`Notification saved for job ${jobId.slice(0, 8)}`);
+
+    return Response.json({ ok: true, notified: true });
+  } catch (err) {
+    console.error('Failed to process GitHub webhook:', err);
+    return Response.json({ error: 'Failed to process webhook' }, { status: 500 });
+  }
+}
+```
+
+## Job ID Extraction
+
+Extracts job ID from branch names like `job/abc12345`:
+
+```javascript
+function extractJobId(branchName) {
+  if (!branchName || !branchName.startsWith('job/')) return null;
+  return branchName.slice(4);
+}
+```
+
+## Environment Variables
+
+<ParamField path="GH_WEBHOOK_SECRET" type="string" required>
+  Secret token configured in GitHub repository webhook settings
+</ParamField>
+
+## GitHub Webhook Setup
+
+1. Go to your repository settings
+2. Navigate to **Webhooks** > **Add webhook**
+3. Set **Payload URL**: `https://your-domain.com/api/github/webhook`
+4. Set **Content type**: `application/json`
+5. Set **Secret**: Your `GH_WEBHOOK_SECRET` value
+6. Select events:
+   - **Pull requests** (for job PR creation)
+   - **Workflow runs** (for job completion/failure)
+7. Save webhook
+
+## Notification System
+
+Webhook events create database notifications viewable in the UI:
+
+```javascript
+await createNotification(message, payload);
+```
+
+Notifications include:
+- AI-generated summary of job results
+- Links to PR and workflow run
+- Status (completed/failed/merged)
+- Changed files
+- Execution log
+
+Users can view notifications in the dashboard to track job progress without polling the API.

@@ -1,0 +1,128 @@
+---
+title: 'POST /api/create-job'
+description: 'Create a new agent job'
+---
+
+## Endpoint
+
+```
+POST /api/create-job
+```
+
+Creates a new Docker agent job. Pushes a `job/*` branch to your repository, triggering the GitHub Actions workflow (`run-job.yml`) to spin up the agent container.
+
+## Authentication
+
+Requires `x-api-key` header. See [Authentication](/api/authentication).
+
+## Request Body
+
+<ParamField body="job" type="string" required>
+  The task prompt for the LLM agent. This is what the agent will execute.
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X POST https://your-domain.com/api/create-job \
+  -H "x-api-key: your-api-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "job": "Analyze recent error logs and create a summary report"
+  }'
+```
+
+## Response
+
+### Success (200)
+
+<ResponseField name="job_id" type="string">
+  Unique identifier for this job (8-character hash)
+</ResponseField>
+
+<ResponseField name="branch" type="string">
+  Git branch name (`job/{job_id}`)
+</ResponseField>
+
+<ResponseField name="pr_url" type="string" optional>
+  GitHub pull request URL (if job creates a PR)
+</ResponseField>
+
+```json
+{
+  "job_id": "abc12345",
+  "branch": "job/abc12345"
+}
+```
+
+### Error Responses
+
+#### Missing Job Field (400)
+
+```json
+{
+  "error": "Missing job field"
+}
+```
+
+#### Unauthorized (401)
+
+```json
+{
+  "error": "Unauthorized"
+}
+```
+
+#### Internal Error (500)
+
+```json
+{
+  "error": "Failed to create job"
+}
+```
+
+## How It Works
+
+1. Server receives job request
+2. Calls `createJob(job)` from `lib/tools/create-job.js`
+3. Generates unique `job_id` (8-char hash from timestamp + random bytes)
+4. Creates `job/{job_id}` branch
+5. Commits `job.md` (task prompt) and `job.config.json` (LLM config)
+6. Pushes branch to GitHub
+7. GitHub Actions workflow detects new `job/*` branch
+8. Workflow spins up Docker agent container
+9. Agent executes task, creates PR with results
+10. Returns job metadata to caller
+
+## Job Configuration
+
+The agent uses your default LLM settings from environment variables or GitHub repository variables:
+
+- `LLM_PROVIDER` (default: `anthropic`)
+- `LLM_MODEL` (default: `claude-sonnet-4-20250514`)
+- `LLM_MAX_TOKENS` (default: `4096`)
+
+To override for specific jobs, use cron or trigger actions with `llm_provider` and `llm_model` fields.
+
+## Example: Scheduled Job
+
+Create jobs programmatically via cron:
+
+```json
+// config/CRONS.json
+{
+  "jobs": [
+    {
+      "name": "daily-report",
+      "schedule": "0 9 * * *",
+      "type": "agent",
+      "job": "Generate daily metrics report from logs",
+      "enabled": true
+    }
+  ]
+}
+```
+
+## Monitoring Job Progress
+
+Use [GET /api/jobs/status](/api/job-status) to check job status and fetch results.

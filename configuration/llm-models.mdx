@@ -1,0 +1,613 @@
+---
+title: LLM Models
+description: Configure LLM providers and models for chat and agent jobs
+---
+
+## Overview
+
+The Pope Bot has two independent LLM configuration layers:
+
+1. **Event Handler** - Powers web chat, Telegram responses, webhook processing, and job summaries
+2. **Job Agent** - Powers the Docker agent (Pi) that executes autonomous tasks
+
+Because these are separate, you can use different models for each layer. For example:
+- Use Claude for interactive chat (fast, expensive)
+- Use a local Ollama model for long-running jobs (slow, free)
+
+---
+
+## Supported Providers
+
+| Provider | Description | Example Models | Use Case |
+|----------|-------------|----------------|----------|
+| **Anthropic** | Claude models (default) | `claude-sonnet-4-20250514`, `claude-opus-4-20250514` | Best overall quality |
+| **OpenAI** | GPT models | `gpt-4o`, `gpt-4-turbo`, `o1` | Good alternative to Claude |
+| **Google** | Gemini models | `gemini-2.5-pro`, `gemini-1.5-flash` | Fast, cost-effective |
+| **Custom** | Any OpenAI-compatible API | DeepSeek, Ollama, Together AI, LM Studio | Local models, cost savings |
+
+<Note>
+Web search is only available for **Anthropic** and **OpenAI** providers. Google and Custom providers don't support web search.
+</Note>
+
+---
+
+## Event Handler Configuration
+
+Controls the LLM used for:
+- Web chat interface
+- Telegram bot responses
+- Webhook trigger processing
+- Job completion summaries
+
+### Configuration Location
+
+Set these in your `.env` file:
+
+```bash
+# .env
+LLM_PROVIDER=anthropic
+LLM_MODEL=claude-sonnet-4-20250514
+LLM_MAX_TOKENS=4096
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### Available Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------||
+| `LLM_PROVIDER` | Provider: `anthropic`, `openai`, `google`, or `custom` | `anthropic` |
+| `LLM_MODEL` | Model name (uses provider default if unset) | Provider-specific |
+| `LLM_MAX_TOKENS` | Max tokens for responses | `4096` |
+
+### Provider-Specific API Keys
+
+**Anthropic:**
+```bash
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+**OpenAI:**
+```bash
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+```
+
+**Google:**
+```bash
+LLM_PROVIDER=google
+GOOGLE_API_KEY=AIza...
+```
+
+**Custom (OpenAI-compatible):**
+```bash
+LLM_PROVIDER=custom
+OPENAI_BASE_URL=http://localhost:11434/v1
+CUSTOM_API_KEY=your-key  # Optional, if endpoint requires auth
+```
+
+### Apply Changes
+
+Restart your server after modifying `.env`:
+
+```bash
+# Docker deployment
+docker compose up -d
+
+# Dev server
+npm run dev
+```
+
+---
+
+## Job Agent Configuration
+
+Controls the LLM used for Docker agent (Pi) jobs.
+
+### Default Job Model
+
+Set via GitHub repository variables:
+
+```bash
+# Set default provider and model
+npx thepopebot set-var LLM_PROVIDER anthropic
+npx thepopebot set-var LLM_MODEL claude-sonnet-4-20250514
+
+# Set API key as GitHub secret
+npx thepopebot set-agent-secret ANTHROPIC_API_KEY sk-ant-...
+```
+
+### Required GitHub Secrets
+
+| Provider | GitHub Secret | Command |
+|----------|---------------|---------||
+| Anthropic | `AGENT_ANTHROPIC_API_KEY` | `npx thepopebot set-agent-secret ANTHROPIC_API_KEY sk-ant-...` |
+| OpenAI | `AGENT_OPENAI_API_KEY` | `npx thepopebot set-agent-secret OPENAI_API_KEY sk-...` |
+| Google | `AGENT_GOOGLE_API_KEY` | `npx thepopebot set-agent-secret GOOGLE_API_KEY AIza...` |
+| Custom | `AGENT_CUSTOM_API_KEY` | `npx thepopebot set-agent-secret CUSTOM_API_KEY your-key` |
+
+<Note>
+The `AGENT_` prefix is automatically added by the CLI. These secrets are filtered from the LLM's bash output for security.
+</Note>
+
+---
+
+## Per-Job Model Overrides
+
+You can override the default model for individual cron jobs or webhook triggers.
+
+### In Cron Jobs
+
+Add `llm_provider` and `llm_model` to any agent-type entry in `config/CRONS.json`:
+
+```json
+{
+  "name": "code-review",
+  "schedule": "0 9 * * 1",
+  "type": "agent",
+  "job": "Review open PRs and leave comments",
+  "llm_provider": "openai",
+  "llm_model": "gpt-4o",
+  "enabled": true
+}
+```
+
+### In Webhook Triggers
+
+Add `llm_provider` and `llm_model` to any agent-type action in `config/TRIGGERS.json`:
+
+```json
+{
+  "name": "review-github-event",
+  "watch_path": "/github/webhook",
+  "actions": [
+    { 
+      "type": "agent", 
+      "job": "Review the GitHub event: {{body}}",
+      "llm_provider": "openai",
+      "llm_model": "gpt-4o"
+    }
+  ],
+  "enabled": true
+}
+```
+
+<Warning>
+The matching GitHub secret must be set before using per-job overrides. If the secret is missing, the job will fail.
+</Warning>
+
+---
+
+## Provider Details
+
+### Anthropic (Default)
+
+**Default model:** `claude-sonnet-4-20250514`
+
+**Setup (Event Handler):**
+```bash
+# .env
+LLM_PROVIDER=anthropic
+LLM_MODEL=claude-sonnet-4-20250514
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+**Setup (Job Agent):**
+```bash
+npx thepopebot set-var LLM_PROVIDER anthropic
+npx thepopebot set-var LLM_MODEL claude-sonnet-4-20250514
+npx thepopebot set-agent-secret ANTHROPIC_API_KEY sk-ant-...
+```
+
+**Available models:**
+- `claude-sonnet-4-20250514` - Balanced performance and cost
+- `claude-opus-4-20250514` - Highest quality, most expensive
+- `claude-3-5-sonnet-20241022` - Previous generation
+
+**Features:**
+- Web search support ✅
+- Best code generation quality
+- Excellent instruction following
+
+---
+
+### OpenAI
+
+**Default model:** `gpt-4o`
+
+**Setup (Event Handler):**
+```bash
+# .env
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4o
+OPENAI_API_KEY=sk-...
+```
+
+**Setup (Job Agent):**
+```bash
+npx thepopebot set-var LLM_PROVIDER openai
+npx thepopebot set-var LLM_MODEL gpt-4o
+npx thepopebot set-agent-secret OPENAI_API_KEY sk-...
+```
+
+**Available models:**
+- `gpt-4o` - Multimodal, fast, good quality
+- `gpt-4-turbo` - Previous generation
+- `o1` - Advanced reasoning (slower, more expensive)
+
+**Features:**
+- Web search support ✅
+- Good code generation
+- Fast inference
+
+---
+
+### Google Gemini
+
+**Default model:** `gemini-2.5-pro`
+
+**Setup (Event Handler):**
+```bash
+# .env
+LLM_PROVIDER=google
+LLM_MODEL=gemini-2.5-pro
+GOOGLE_API_KEY=AIza...
+```
+
+**Setup (Job Agent):**
+```bash
+npx thepopebot set-var LLM_PROVIDER google
+npx thepopebot set-var LLM_MODEL gemini-2.5-pro
+npx thepopebot set-agent-secret GOOGLE_API_KEY AIza...
+```
+
+**Available models:**
+- `gemini-2.5-pro` - Latest, best quality
+- `gemini-1.5-flash` - Fast, cost-effective
+
+**Features:**
+- Web search support ❌
+- Large context window
+- Cost-effective
+
+---
+
+### Custom (OpenAI-Compatible)
+
+Use any API that implements the OpenAI chat completions format.
+
+**Supported services:**
+- **Cloud:** DeepSeek, Together AI, Fireworks, Groq, Perplexity
+- **Local:** Ollama, LM Studio, vLLM, llama.cpp
+
+#### Cloud Custom (e.g., DeepSeek)
+
+**Setup (Event Handler):**
+```bash
+# .env
+LLM_PROVIDER=custom
+LLM_MODEL=deepseek-chat
+OPENAI_BASE_URL=https://api.deepseek.com/v1
+CUSTOM_API_KEY=sk-...
+```
+
+**Setup (Job Agent):**
+```bash
+npx thepopebot set-var LLM_PROVIDER custom
+npx thepopebot set-var LLM_MODEL deepseek-chat
+npx thepopebot set-var OPENAI_BASE_URL https://api.deepseek.com/v1
+npx thepopebot set-agent-secret CUSTOM_API_KEY sk-...
+```
+
+#### Local Custom (e.g., Ollama)
+
+**Setup (Event Handler):**
+```bash
+# .env
+LLM_PROVIDER=custom
+LLM_MODEL=qwen3:8b
+OPENAI_BASE_URL=http://localhost:11434/v1
+# CUSTOM_API_KEY not needed for Ollama
+```
+
+**Setup (Job Agent):**
+```bash
+# Use self-hosted runner for local models
+npx thepopebot set-var RUNS_ON self-hosted
+npx thepopebot set-var LLM_PROVIDER custom
+npx thepopebot set-var LLM_MODEL qwen3:8b
+npx thepopebot set-var OPENAI_BASE_URL http://host.docker.internal:11434/v1
+```
+
+<Warning>
+**Local models require a self-hosted runner.** Jobs run in Docker containers, so:
+- Set `RUNS_ON=self-hosted` to route jobs to your machine
+- Use `http://host.docker.internal:11434/v1` to reach the host from inside the container
+- Ensure your model server is running before starting jobs
+</Warning>
+
+**Features:**
+- Web search support ❌
+- Free for local models
+- Full control over model selection
+- Privacy (data stays local)
+
+---
+
+## Example Configurations
+
+### Same Model for Everything
+
+Use Claude for both chat and jobs:
+
+```bash
+# .env (Event Handler)
+LLM_PROVIDER=anthropic
+LLM_MODEL=claude-sonnet-4-20250514
+ANTHROPIC_API_KEY=sk-ant-...
+
+# GitHub Variables (Job Agent)
+npx thepopebot set-var LLM_PROVIDER anthropic
+npx thepopebot set-var LLM_MODEL claude-sonnet-4-20250514
+npx thepopebot set-agent-secret ANTHROPIC_API_KEY sk-ant-...
+```
+
+---
+
+### Different Models for Chat vs Jobs
+
+Use Claude for chat, GPT-4o for jobs:
+
+```bash
+# .env (Event Handler)
+LLM_PROVIDER=anthropic
+LLM_MODEL=claude-sonnet-4-20250514
+ANTHROPIC_API_KEY=sk-ant-...
+
+# GitHub Variables (Job Agent)
+npx thepopebot set-var LLM_PROVIDER openai
+npx thepopebot set-var LLM_MODEL gpt-4o
+npx thepopebot set-agent-secret OPENAI_API_KEY sk-...
+```
+
+---
+
+### Cloud Chat, Local Jobs
+
+Use Claude for chat, local Ollama for jobs:
+
+```bash
+# .env (Event Handler)
+LLM_PROVIDER=anthropic
+LLM_MODEL=claude-sonnet-4-20250514
+ANTHROPIC_API_KEY=sk-ant-...
+
+# GitHub Variables (Job Agent)
+npx thepopebot set-var RUNS_ON self-hosted
+npx thepopebot set-var LLM_PROVIDER custom
+npx thepopebot set-var LLM_MODEL qwen3:8b
+npx thepopebot set-var OPENAI_BASE_URL http://host.docker.internal:11434/v1
+```
+
+---
+
+### Per-Job Model Selection
+
+Use Claude by default, GPT-4o for specific jobs:
+
+```bash
+# Set Claude as default
+npx thepopebot set-var LLM_PROVIDER anthropic
+npx thepopebot set-var LLM_MODEL claude-sonnet-4-20250514
+npx thepopebot set-agent-secret ANTHROPIC_API_KEY sk-ant-...
+
+# Also set OpenAI for per-job overrides
+npx thepopebot set-agent-secret OPENAI_API_KEY sk-...
+```
+
+Then in `config/CRONS.json`:
+```json
+[
+  {
+    "name": "regular-job",
+    "schedule": "0 * * * *",
+    "type": "agent",
+    "job": "Regular task",
+    "enabled": true
+    // Uses default Claude
+  },
+  {
+    "name": "special-job",
+    "schedule": "0 9 * * *",
+    "type": "agent",
+    "job": "Special task requiring GPT-4o",
+    "llm_provider": "openai",
+    "llm_model": "gpt-4o",
+    "enabled": true
+  }
+]
+```
+
+---
+
+## Quick Reference
+
+### Event Handler (Chat, Telegram, Webhooks)
+
+**Where:** `.env` file  
+**How:** Edit file, restart server  
+**Variables:** `LLM_PROVIDER`, `LLM_MODEL`, `[PROVIDER]_API_KEY`
+
+```bash
+# Edit .env
+code .env
+
+# Restart
+docker compose up -d  # Docker
+npm run dev           # Local
+```
+
+---
+
+### Default Job Model
+
+**Where:** GitHub repository variables  
+**How:** CLI commands  
+**Variables:** `LLM_PROVIDER`, `LLM_MODEL`  
+**Secrets:** `AGENT_[PROVIDER]_API_KEY`
+
+```bash
+# Set variables
+npx thepopebot set-var LLM_PROVIDER anthropic
+npx thepopebot set-var LLM_MODEL claude-sonnet-4-20250514
+
+# Set secret
+npx thepopebot set-agent-secret ANTHROPIC_API_KEY sk-ant-...
+```
+
+---
+
+### Per-Job Override
+
+**Where:** `config/CRONS.json` or `config/TRIGGERS.json`  
+**How:** Add `llm_provider` and `llm_model` fields  
+**Requires:** Matching GitHub secret must be set
+
+```json
+{
+  "type": "agent",
+  "job": "Task description",
+  "llm_provider": "openai",
+  "llm_model": "gpt-4o"
+}
+```
+
+---
+
+### Custom Provider Endpoint
+
+**Event Handler:** `OPENAI_BASE_URL` in `.env`  
+**Job Agent:** `OPENAI_BASE_URL` as GitHub variable
+
+```bash
+# Event Handler
+echo "OPENAI_BASE_URL=http://localhost:11434/v1" >> .env
+
+# Job Agent
+npx thepopebot set-var OPENAI_BASE_URL http://host.docker.internal:11434/v1
+```
+
+---
+
+### Self-Hosted Runner (for local models)
+
+**Required for:** Local Ollama, LM Studio, vLLM, etc.  
+**Setup:** GitHub repo variables
+
+```bash
+npx thepopebot set-var RUNS_ON self-hosted
+```
+
+---
+
+## Troubleshooting
+
+### Event Handler model not changing
+
+**Check `.env` file:**
+```bash
+cat .env | grep LLM
+```
+
+**Restart server:**
+```bash
+docker compose down && docker compose up -d
+```
+
+---
+
+### Job agent model not changing
+
+**Verify GitHub variables:**
+```bash
+gh variable list
+```
+
+**Verify GitHub secrets:**
+```bash
+gh secret list
+```
+
+**Re-set if needed:**
+```bash
+npx thepopebot set-var LLM_PROVIDER anthropic
+npx thepopebot set-agent-secret ANTHROPIC_API_KEY sk-ant-...
+```
+
+---
+
+### Per-job override not working
+
+**Check secret exists:**
+```bash
+gh secret list | grep AGENT_OPENAI_API_KEY
+```
+
+**Set missing secret:**
+```bash
+npx thepopebot set-agent-secret OPENAI_API_KEY sk-...
+```
+
+**Verify JSON syntax:**
+```bash
+cat config/CRONS.json | jq .
+```
+
+---
+
+### Local model not reachable
+
+**Verify self-hosted runner:**
+```bash
+gh variable get RUNS_ON
+# Should output: self-hosted
+```
+
+**Check URL format:**
+- Event Handler: `http://localhost:11434/v1` ✅
+- Job Agent: `http://host.docker.internal:11434/v1` ✅
+- Job Agent: `http://localhost:11434/v1` ❌ (won't work from Docker)
+
+**Test model locally:**
+```bash
+curl http://localhost:11434/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen3:8b",
+    "messages": [{"role": "user", "content": "test"}]
+  }'
+```
+
+---
+
+### Authentication errors
+
+**Invalid API key:**
+- Check key format matches provider requirements
+- Verify key hasn't expired or been revoked
+- Test key with provider's CLI or direct API call
+
+**Missing API key:**
+```bash
+# Event Handler - check .env
+cat .env | grep API_KEY
+
+# Job Agent - check GitHub secrets
+gh secret list
+```
+
+**Wrong prefix:**
+- ✅ `npx thepopebot set-agent-secret ANTHROPIC_API_KEY ...`
+- ❌ `npx thepopebot set-agent-secret AGENT_ANTHROPIC_API_KEY ...`
+
+The CLI adds the `AGENT_` prefix automatically.

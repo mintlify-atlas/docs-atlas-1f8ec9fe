@@ -1,0 +1,126 @@
+---
+title: 'Authentication'
+description: 'API key authentication via x-api-key header'
+---
+
+## Overview
+
+All `/api` endpoints (except public webhooks and `/api/ping`) require authentication via the `x-api-key` header.
+
+## API Key Header
+
+Include your API key in every request:
+
+```bash
+curl -H "x-api-key: your-api-key-here" \
+  https://your-domain.com/api/create-job
+```
+
+<ParamField header="x-api-key" type="string" required>
+  Your API key from the database. Managed through the admin UI, not environment variables.
+</ParamField>
+
+## How Authentication Works
+
+1. Request includes `x-api-key` header
+2. Server calls `verifyApiKey(apiKey)` from `lib/db/api-keys.js`
+3. Database lookup with timing-safe comparison
+4. Returns `401 Unauthorized` if key is missing or invalid
+
+```javascript
+function checkAuth(routePath, request) {
+  if (PUBLIC_ROUTES.includes(routePath)) return null;
+
+  const apiKey = request.headers.get('x-api-key');
+  if (!apiKey) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const record = verifyApiKey(apiKey);
+  if (!record) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  return null;
+}
+```
+
+## API Key Management
+
+API keys are stored in the SQLite database (table: `api_keys`) and managed through the admin UI.
+
+**Not environment variables.** Unlike most framework secrets, API keys are database-backed for multi-key support and rotation.
+
+### Creating API Keys
+
+Use the admin UI at `/settings` or insert directly into the database:
+
+```sql
+INSERT INTO api_keys (key_hash, name, created_at)
+VALUES (?, ?, ?);
+```
+
+Keys are hashed using bcrypt before storage.
+
+### Revoking API Keys
+
+Delete from the `api_keys` table:
+
+```sql
+DELETE FROM api_keys WHERE id = ?;
+```
+
+## Public Routes
+
+These routes do **not** require API keys:
+
+- `/api/ping` - Health check
+- `/api/telegram/webhook` - Authenticated via Telegram secret
+- `/api/github/webhook` - Authenticated via GitHub webhook secret
+
+Webhook routes use their own authentication mechanisms (see [Telegram](/api/telegram) and [GitHub Webhook](/api/github-webhook)).
+
+## Timing-Safe Comparison
+
+API key verification uses constant-time comparison to prevent timing attacks:
+
+```javascript
+function safeCompare(a, b) {
+  if (!a || !b) return false;
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
+}
+```
+
+## Error Responses
+
+### Missing API Key
+
+```bash
+curl https://your-domain.com/api/create-job
+```
+
+```json
+{
+  "error": "Unauthorized"
+}
+```
+
+HTTP Status: `401`
+
+### Invalid API Key
+
+```bash
+curl -H "x-api-key: invalid-key" \
+  https://your-domain.com/api/create-job
+```
+
+```json
+{
+  "error": "Unauthorized"
+}
+```
+
+HTTP Status: `401`

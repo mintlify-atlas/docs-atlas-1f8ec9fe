@@ -1,0 +1,736 @@
+---
+title: Webhook Triggers
+description: Automatically respond to incoming webhooks with custom actions
+---
+
+## Overview
+
+Webhook triggers let you automatically respond to HTTP requests hitting specific endpoints. When a matching request arrives, the system can:
+- Execute an agent task with LLM reasoning
+- Run a shell command
+- Forward the request to another service
+
+Triggers are defined in `config/TRIGGERS.json` and loaded when the server starts.
+
+---
+
+## Configuration
+
+### File Location
+
+```
+config/TRIGGERS.json
+```
+
+### Schema
+
+Each trigger is a JSON object with these fields:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Unique identifier for this trigger |
+| `watch_path` | string | Yes | API endpoint to watch (e.g., `/webhook`, `/github/webhook`) |
+| `actions` | array | Yes | Array of actions to execute (can be multiple) |
+| `enabled` | boolean | Yes | Whether this trigger is active |
+
+### Action Schema
+
+Each action in the `actions` array has these fields:
+
+**Common fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | Yes | Action type: `agent`, `command`, or `webhook` |
+
+**Agent type** (`type: "agent"`):
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `job` | string | Yes | Task prompt for the LLM agent (supports template tokens) |
+| `llm_provider` | string | No | Override default provider: `anthropic`, `openai`, `google`, `custom` |
+| `llm_model` | string | No | Override default model name |
+
+**Command type** (`type: "command"`):
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `command` | string | Yes | Shell command to execute (supports template tokens) |
+
+**Webhook type** (`type: "webhook"`):
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string | Yes | Target endpoint URL |
+| `method` | string | No | HTTP method (`GET` or `POST`, default: `POST`) |
+| `headers` | object | No | Custom HTTP headers |
+| `vars` | object | No | Variables to merge with webhook data |
+
+---
+
+## Template Tokens
+
+Both `job` and `command` strings support template tokens to access webhook data:
+
+| Token | Description | Example |
+|-------|-------------|---------||
+| `{{body}}` | Full request body (JSON stringified) | `{{body}}` |
+| `{{body.field}}` | Specific field from request body | `{{body.action}}`, `{{body.user.name}}` |
+| `{{query}}` | Full query string object | `{{query}}` |
+| `{{query.field}}` | Specific query parameter | `{{query.token}}`, `{{query.id}}` |
+| `{{headers}}` | Full headers object | `{{headers}}` |
+| `{{headers.field}}` | Specific header value | `{{headers.user-agent}}` |
+
+### Token Examples
+
+**Request:**
+```http
+POST /webhook?source=github&id=123
+Content-Type: application/json
+User-Agent: GitHub-Hookshot/abc
+
+{
+  "action": "opened",
+  "issue": {
+    "number": 42,
+    "title": "Bug report"
+  }
+}
+```
+
+**Available tokens:**
+
+```javascript
+{{body}}              // Full JSON: {"action":"opened","issue":{...}}
+{{body.action}}       // "opened"
+{{body.issue.number}} // 42
+{{body.issue.title}}  // "Bug report"
+{{query}}             // {"source":"github","id":"123"}
+{{query.source}}      // "github"
+{{query.id}}          // "123"
+{{headers}}           // Full headers object
+{{headers.user-agent}}// "GitHub-Hookshot/abc"
+```
+
+---
+
+## Action Types
+
+### Agent Actions
+
+Spins up a Docker agent (Pi) to process the webhook with LLM reasoning.
+
+**When to use:**
+- Analyzing webhook payloads and deciding what to do
+- Processing GitHub events (issues, PRs, releases)
+- Extracting and transforming data
+- Tasks requiring context and decision-making
+
+**Runtime:** Minutes to hours  
+**Cost:** LLM API calls + GitHub Actions minutes  
+**Working directory:** `triggers/`
+
+#### Example: Analyze GitHub Event
+
+```json
+{
+  "name": "review-github-event",
+  "watch_path": "/github/webhook",
+  "actions": [
+    { 
+      "type": "agent", 
+      "job": "A GitHub event occurred. Review the payload and summarize what happened:\n{{body}}" 
+    }
+  ],
+  "enabled": true
+}
+```
+
+#### Example: Process Webhook Data
+
+```json
+{
+  "name": "react-to-webhook",
+  "watch_path": "/webhook",
+  "actions": [
+    { 
+      "type": "agent", 
+      "job": "A webhook was received. Analyze the payload and decide if any action is needed:\n{{body}}" 
+    }
+  ],
+  "enabled": true
+}
+```
+
+#### Example: Using a Different Model
+
+```json
+{
+  "name": "review-with-openai",
+  "watch_path": "/github/webhook",
+  "actions": [
+    { 
+      "type": "agent", 
+      "job": "Review the GitHub event and summarize what happened:\n{{body}}",
+      "llm_provider": "openai",
+      "llm_model": "gpt-4o"
+    }
+  ],
+  "enabled": true
+}
+```
+
+<Note>
+Per-action LLM overrides require the corresponding GitHub secret to be set. See [LLM Models](/configuration/llm-models) for details.
+</Note>
+
+---
+
+### Command Actions
+
+Runs a shell command on the event handler when the webhook is received.
+
+**When to use:**
+- Simple logging or notifications
+- Triggering local scripts
+- File operations (writing webhook data to disk)
+- Quick status updates
+
+**Runtime:** Milliseconds to seconds  
+**Cost:** Free (runs on event handler)  
+**Working directory:** `triggers/`
+
+#### Example: Log Webhook
+
+```json
+{
+  "name": "on-webhook-log",
+  "watch_path": "/webhook",
+  "actions": [
+    { 
+      "type": "command", 
+      "command": "echo 'webhook received: {{body}}'" 
+    }
+  ],
+  "enabled": true
+}
+```
+
+#### Example: Save to File
+
+```json
+{
+  "name": "save-webhook",
+  "watch_path": "/webhook",
+  "actions": [
+    { 
+      "type": "command", 
+      "command": "echo '{{body}}' > data/webhooks/$(date +%s).json" 
+    }
+  ],
+  "enabled": true
+}
+```
+
+#### Example: Extract Field
+
+```json
+{
+  "name": "on-github-event",
+  "watch_path": "/github/webhook",
+  "actions": [
+    { 
+      "type": "command", 
+      "command": "echo 'GitHub action: {{body.action}}' >> logs/github-events.log" 
+    }
+  ],
+  "enabled": true
+}
+```
+
+<Warning>
+Commands run with the same permissions as the event handler process. Validate and sanitize webhook data before using it in commands.
+</Warning>
+
+---
+
+### Webhook Actions
+
+Forwards the webhook to another service or transforms it into a different request.
+
+**When to use:**
+- Forwarding webhooks to external services
+- Transforming webhook format before forwarding
+- Notifying multiple services about the same event
+- Bridging between services with different webhook formats
+
+**Runtime:** Milliseconds to seconds  
+**Cost:** Free (runs on event handler)
+
+#### Example: Forward to External Service
+
+```json
+{
+  "name": "forward-webhook",
+  "watch_path": "/webhook",
+  "actions": [
+    { 
+      "type": "webhook", 
+      "url": "https://example.com/hook", 
+      "method": "POST",
+      "vars": { "source": "webhook" }
+    }
+  ],
+  "enabled": true
+}
+```
+
+#### Example: Forward GitHub Event
+
+```json
+{
+  "name": "forward-github",
+  "watch_path": "/github/webhook",
+  "actions": [
+    { 
+      "type": "webhook", 
+      "url": "https://example.com/hook", 
+      "method": "POST",
+      "vars": { "source": "github" }
+    }
+  ],
+  "enabled": true
+}
+```
+
+#### Example: Custom Headers
+
+```json
+{
+  "name": "forward-with-auth",
+  "watch_path": "/webhook",
+  "actions": [
+    { 
+      "type": "webhook", 
+      "url": "https://api.example.com/endpoint", 
+      "method": "POST",
+      "headers": {
+        "Authorization": "Bearer YOUR_TOKEN",
+        "X-Custom-Header": "value"
+      },
+      "vars": { "forwarded": true }
+    }
+  ],
+  "enabled": true
+}
+```
+
+<Note>
+Webhook actions:
+- `POST` requests send: `{ ...vars, data: <original_webhook_body> }`
+- `GET` requests ignore both `vars` and the original body
+- Original webhook headers are NOT forwarded (set custom headers explicitly)
+</Note>
+
+---
+
+## Multiple Actions
+
+Triggers can execute multiple actions in sequence:
+
+```json
+{
+  "name": "multi-action",
+  "watch_path": "/webhook",
+  "actions": [
+    { 
+      "type": "command", 
+      "command": "echo 'Webhook received' >> logs/webhooks.log" 
+    },
+    { 
+      "type": "webhook", 
+      "url": "https://example.com/notify", 
+      "method": "POST",
+      "vars": { "status": "received" }
+    },
+    { 
+      "type": "agent", 
+      "job": "Process this webhook data:\n{{body}}" 
+    }
+  ],
+  "enabled": true
+}
+```
+
+Actions execute:
+1. **Fire-and-forget** - they don't wait for completion
+2. **After authentication** - only for authorized requests
+3. **Before route handler response** - webhook caller doesn't wait
+
+---
+
+## Complete Example
+
+Here's a full `config/TRIGGERS.json` with multiple trigger types:
+
+```json
+[
+  {
+    "name": "on-github-event",
+    "watch_path": "/github/webhook",
+    "actions": [
+      { "type": "command", "command": "echo 'github webhook fired'" }
+    ],
+    "enabled": false
+  },
+  {
+    "name": "on-webhook-log",
+    "watch_path": "/webhook",
+    "actions": [
+      { "type": "command", "command": "echo 'webhook received: {{body}}'" }
+    ],
+    "enabled": false
+  },
+  {
+    "name": "review-github-event",
+    "watch_path": "/github/webhook",
+    "actions": [
+      { "type": "agent", "job": "A GitHub event occurred. Review the payload and summarize what happened:\n{{body}}" }
+    ],
+    "enabled": false
+  },
+  {
+    "name": "react-to-webhook",
+    "watch_path": "/webhook",
+    "actions": [
+      { "type": "agent", "job": "A webhook was received. Analyze the payload and decide if any action is needed:\n{{body}}" }
+    ],
+    "enabled": false
+  },
+  {
+    "name": "forward-github",
+    "watch_path": "/github/webhook",
+    "actions": [
+      { "type": "webhook", "url": "https://example.com/hook", "method": "POST", "vars": { "source": "github" } }
+    ],
+    "enabled": false
+  },
+  {
+    "name": "forward-webhook",
+    "watch_path": "/webhook",
+    "actions": [
+      { "type": "webhook", "url": "https://example.com/hook", "method": "POST", "vars": { "source": "webhook" } }
+    ],
+    "enabled": false
+  },
+  {
+    "name": "review-with-openai",
+    "watch_path": "/github/webhook",
+    "actions": [
+      { "type": "agent", "job": "Review the GitHub event and summarize what happened:\n{{body}}", "llm_provider": "openai", "llm_model": "gpt-4o" }
+    ],
+    "enabled": false
+  }
+]
+```
+
+---
+
+## Available Endpoints
+
+These endpoints are available for webhook triggers:
+
+| Endpoint | Auth | Description |
+|----------|------|-------------|
+| `/api/webhook` | `x-api-key` header | General-purpose webhook endpoint |
+| `/api/github/webhook` | GitHub webhook secret | GitHub webhooks (requires `GH_WEBHOOK_SECRET`) |
+| `/api/telegram/webhook` | Telegram webhook secret | Telegram bot webhooks |
+
+### General Webhook
+
+For third-party services:
+
+```bash
+curl -X POST https://your-bot.com/api/webhook \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d '{"key": "value"}'
+```
+
+### GitHub Webhook
+
+Configure in **GitHub repo → Settings → Webhooks**:
+
+- **Payload URL**: `https://your-bot.com/api/github/webhook`
+- **Content type**: `application/json`
+- **Secret**: Your `GH_WEBHOOK_SECRET` value
+- **Events**: Choose which events to receive
+
+### Telegram Webhook
+
+Automatically configured when you run `npm run setup-telegram`.
+
+---
+
+## Managing Triggers
+
+### Via Web UI
+
+The web interface provides a visual trigger editor (coming soon).
+
+### Via CLI
+
+Edit the file directly:
+
+```bash
+code config/TRIGGERS.json
+```
+
+Restart the server to apply changes:
+
+```bash
+# Docker
+docker compose restart
+
+# Dev server
+pkill -f next && npm run dev
+```
+
+### Via Agent
+
+Ask your agent to modify triggers:
+
+> "Create a trigger that logs all GitHub webhooks"
+
+> "Add a trigger to forward all webhooks to https://example.com"
+
+> "Enable the review-github-event trigger"
+
+---
+
+## LLM Model Overrides
+
+Agent-type actions can override the default LLM configuration:
+
+```json
+{
+  "name": "review-with-custom-model",
+  "watch_path": "/github/webhook",
+  "actions": [
+    { 
+      "type": "agent", 
+      "job": "Review the GitHub event:\n{{body}}",
+      "llm_provider": "openai",
+      "llm_model": "gpt-4o"
+    }
+  ],
+  "enabled": true
+}
+```
+
+Required secrets must be set as GitHub secrets:
+
+```bash
+npx thepopebot set-agent-secret OPENAI_API_KEY sk-...
+```
+
+See [LLM Models](/configuration/llm-models) for complete details.
+
+---
+
+## Best Practices
+
+### Use Descriptive Names
+
+❌ `trigger1`, `test`, `hook`  
+✅ `process-github-issues`, `forward-to-slack`, `log-api-calls`
+
+### Start Disabled
+
+Test new triggers manually before enabling:
+
+```json
+{
+  "name": "new-trigger",
+  "watch_path": "/webhook",
+  "actions": [...],
+  "enabled": false  // Test first!
+}
+```
+
+Send test webhooks, verify behavior, then enable.
+
+### Choose the Right Action Type
+
+| Need | Use |
+|------|-----|
+| Analysis, decision-making, complex processing | `agent` |
+| Simple logging, file operations | `command` |
+| Forward to external service | `webhook` |
+
+### Validate Webhook Authenticity
+
+Always use authentication:
+
+- `/api/webhook` - Requires `x-api-key` header
+- `/api/github/webhook` - Validates GitHub signature
+- `/api/telegram/webhook` - Validates Telegram secret
+
+### Be Careful with Template Tokens
+
+Sanitize webhook data in commands:
+
+```json
+// ❌ Dangerous - unsanitized user input in command
+{ "type": "command", "command": "rm -rf {{body.path}}" }
+
+// ✅ Safe - log to file, let agent process it
+{ "type": "command", "command": "echo '{{body}}' >> data/webhooks.log" }
+{ "type": "agent", "job": "Process webhook: {{body}}" }
+```
+
+### Use Multiple Actions for Complex Workflows
+
+```json
+{
+  "name": "issue-workflow",
+  "watch_path": "/github/webhook",
+  "actions": [
+    // Log it
+    { "type": "command", "command": "echo '{{body.action}}' >> logs/issues.log" },
+    // Notify external service
+    { "type": "webhook", "url": "https://slack.com/api/...", "method": "POST" },
+    // Let agent analyze and respond
+    { "type": "agent", "job": "A GitHub issue was {{body.action}}. Review and respond if needed: {{body}}" }
+  ],
+  "enabled": true
+}
+```
+
+---
+
+## Debugging
+
+### Check Server Logs
+
+```bash
+# Docker
+docker compose logs -f event-handler
+
+# Dev server
+npm run dev
+```
+
+Triggers log when they fire:
+
+```
+[trigger] Webhook received: /github/webhook
+[trigger] Executing action: review-github-event
+```
+
+### Test Webhooks Manually
+
+Use curl to send test requests:
+
+```bash
+curl -X POST https://your-bot.com/api/webhook \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d '{"test": "data"}'
+```
+
+### Verify Template Token Resolution
+
+Add a debug command action:
+
+```json
+{
+  "name": "debug-tokens",
+  "watch_path": "/webhook",
+  "actions": [
+    { "type": "command", "command": "echo 'Body: {{body}} | Query: {{query}} | Headers: {{headers}}'" }
+  ],
+  "enabled": true
+}
+```
+
+Check server logs to see resolved values.
+
+### Check Agent Job Results
+
+Agent actions create PRs:
+1. Check your repository's Pull Requests tab
+2. Look for branches starting with `job/`
+3. Review logs in the PR description
+
+---
+
+## Common Patterns
+
+### GitHub Issue Triage
+
+```json
+{
+  "name": "triage-issues",
+  "watch_path": "/github/webhook",
+  "actions": [
+    { 
+      "type": "agent", 
+      "job": "A GitHub issue was {{body.action}}. If it's a new issue, review it and add appropriate labels. If it's urgent, notify the team. Issue data:\n{{body}}" 
+    }
+  ],
+  "enabled": true
+}
+```
+
+### Webhook to Slack Bridge
+
+```json
+{
+  "name": "notify-slack",
+  "watch_path": "/webhook",
+  "actions": [
+    { 
+      "type": "webhook", 
+      "url": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL", 
+      "method": "POST",
+      "vars": {
+        "text": "Webhook received",
+        "channel": "#notifications"
+      }
+    }
+  ],
+  "enabled": true
+}
+```
+
+### Multi-Service Notification
+
+```json
+{
+  "name": "broadcast-event",
+  "watch_path": "/webhook",
+  "actions": [
+    { "type": "webhook", "url": "https://service1.com/hook", "method": "POST" },
+    { "type": "webhook", "url": "https://service2.com/hook", "method": "POST" },
+    { "type": "webhook", "url": "https://service3.com/hook", "method": "POST" }
+  ],
+  "enabled": true
+}
+```
+
+### Webhook Data Archive
+
+```json
+{
+  "name": "archive-webhooks",
+  "watch_path": "/webhook",
+  "actions": [
+    { 
+      "type": "command", 
+      "command": "mkdir -p data/webhooks && echo '{{body}}' > data/webhooks/$(date +%Y%m%d-%H%M%S).json" 
+    }
+  ],
+  "enabled": true
+}
+```

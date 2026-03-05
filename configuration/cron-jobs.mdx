@@ -1,0 +1,610 @@
+---
+title: Cron Jobs
+description: Schedule recurring tasks with the built-in cron system
+---
+
+## Overview
+
+The Pope Bot includes a built-in cron scheduler that can execute three types of actions:
+- **Agent** - Spin up a Docker agent to complete a task
+- **Command** - Run a shell command on the event handler
+- **Webhook** - Make an HTTP request to an external service
+
+Cron jobs are defined in `config/CRONS.json` and loaded automatically when the server starts.
+
+---
+
+## Configuration
+
+### File Location
+
+```
+config/CRONS.json
+```
+
+### Schema
+
+Each cron job is a JSON object with these fields:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Unique identifier for this job |
+| `schedule` | string | Yes | Cron expression (5-field format) |
+| `type` | string | Yes | Action type: `agent`, `command`, or `webhook` |
+| `enabled` | boolean | Yes | Whether this job is active |
+
+#### Type-Specific Fields
+
+**Agent type** (`type: "agent"`):
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `job` | string | Yes | Task prompt for the LLM agent |
+| `llm_provider` | string | No | Override default provider: `anthropic`, `openai`, `google`, `custom` |
+| `llm_model` | string | No | Override default model name |
+
+**Command type** (`type: "command"`):
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `command` | string | Yes | Shell command to execute |
+
+**Webhook type** (`type: "webhook"`):
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string | Yes | Target endpoint URL |
+| `method` | string | No | HTTP method (`GET` or `POST`, default: `POST`) |
+| `headers` | object | No | Custom HTTP headers |
+| `vars` | object | No | Variables to send in request body |
+
+---
+
+## Schedule Expressions
+
+Uses standard 5-field cron syntax:
+
+```
+* * * * *
+│ │ │ │ │
+│ │ │ │ └─── Day of week (0-7, both 0 and 7 are Sunday)
+│ │ │ └───── Month (1-12)
+│ │ └─────── Day of month (1-31)
+│ └───────── Hour (0-23)
+└─────────── Minute (0-59)
+```
+
+### Common Examples
+
+| Schedule | Description |
+|----------|-------------|
+| `* * * * *` | Every minute |
+| `*/5 * * * *` | Every 5 minutes |
+| `*/30 * * * *` | Every 30 minutes |
+| `0 * * * *` | Every hour (on the hour) |
+| `0 0 * * *` | Daily at midnight |
+| `0 9 * * *` | Daily at 9 AM |
+| `0 9 * * 1` | Every Monday at 9 AM |
+| `0 0 * * 0` | Every Sunday at midnight |
+| `0 9 1 * *` | First day of every month at 9 AM |
+| `0 0 1 1 *` | January 1st at midnight (yearly) |
+
+<Tip>
+Use [crontab.guru](https://crontab.guru/) to visualize and validate cron expressions.
+</Tip>
+
+---
+
+## Action Types
+
+### Agent Actions
+
+Spins up a Docker agent (Pi) to execute a task with LLM reasoning.
+
+**When to use:**
+- Tasks requiring decision-making or analysis
+- Code changes, file manipulation, git operations
+- Web scraping, research, data processing
+- Tasks that need access to skills (browser, APIs, etc.)
+
+**Runtime:** Minutes to hours  
+**Cost:** LLM API calls + GitHub Actions minutes
+
+#### Example: Daily Dependency Check
+
+```json
+{
+  "name": "daily-check",
+  "schedule": "0 9 * * *",
+  "type": "agent",
+  "job": "Check for dependency updates in package.json and report any outdated packages.",
+  "enabled": true
+}
+```
+
+#### Example: Heartbeat with Custom Instructions
+
+```json
+{
+  "name": "heartbeat",
+  "schedule": "*/30 * * * *",
+  "type": "agent",
+  "job": "Read the file at config/HEARTBEAT.md and complete the tasks described there.",
+  "enabled": true
+}
+```
+
+#### Example: Using a Different Model
+
+```json
+{
+  "name": "daily-check-openai",
+  "schedule": "0 9 * * *",
+  "type": "agent",
+  "job": "Check for dependency updates in package.json and report any outdated packages.",
+  "llm_provider": "openai",
+  "llm_model": "gpt-4o",
+  "enabled": true
+}
+```
+
+<Note>
+Per-job LLM overrides require the corresponding GitHub secret to be set:
+- Anthropic: `AGENT_ANTHROPIC_API_KEY`
+- OpenAI: `AGENT_OPENAI_API_KEY`
+- Google: `AGENT_GOOGLE_API_KEY`
+- Custom: `AGENT_CUSTOM_API_KEY` (if endpoint requires auth)
+
+See [LLM Models](/configuration/llm-models) for details.
+</Note>
+
+---
+
+### Command Actions
+
+Runs a shell command directly on the event handler.
+
+**When to use:**
+- Simple operations that don't need LLM reasoning
+- System maintenance, cleanup tasks
+- Triggering external scripts
+- Quick status checks
+
+**Runtime:** Milliseconds to seconds  
+**Cost:** Free (runs on event handler)  
+**Working directory:** `cron/`
+
+#### Example: Simple Ping
+
+```json
+{
+  "name": "ping",
+  "schedule": "*/1 * * * *",
+  "type": "command",
+  "command": "echo \"pong!\"",
+  "enabled": true
+}
+```
+
+#### Example: Log Cleanup
+
+```json
+{
+  "name": "cleanup-logs",
+  "schedule": "0 0 * * 0",
+  "type": "command",
+  "command": "find logs/ -type f -mtime +30 -delete",
+  "enabled": true
+}
+```
+
+#### Example: Backup Database
+
+```json
+{
+  "name": "backup-db",
+  "schedule": "0 2 * * *",
+  "type": "command",
+  "command": "cp data/thepopebot.sqlite backups/db-$(date +%Y%m%d).sqlite",
+  "enabled": true
+}
+```
+
+<Warning>
+Commands run with the same permissions as the event handler process. Be careful with destructive operations.
+</Warning>
+
+---
+
+### Webhook Actions
+
+Makes an HTTP request to an external service.
+
+**When to use:**
+- Calling external APIs
+- Triggering webhooks in other systems
+- Sending notifications to external services
+- Health checks and uptime monitoring
+
+**Runtime:** Milliseconds to seconds  
+**Cost:** Free (runs on event handler)
+
+#### Example: Health Check (GET)
+
+```json
+{
+  "name": "health-check",
+  "schedule": "*/10 * * * *",
+  "type": "webhook",
+  "url": "https://example.com/health",
+  "method": "GET",
+  "enabled": true
+}
+```
+
+#### Example: Status Update (POST)
+
+```json
+{
+  "name": "ping-status",
+  "schedule": "*/5 * * * *",
+  "type": "webhook",
+  "url": "https://example.com/status",
+  "method": "POST",
+  "vars": { 
+    "source": "heartbeat",
+    "timestamp": "{{datetime}}"
+  },
+  "enabled": true
+}
+```
+
+#### Example: Custom Headers
+
+```json
+{
+  "name": "api-call",
+  "schedule": "0 * * * *",
+  "type": "webhook",
+  "url": "https://api.example.com/endpoint",
+  "method": "POST",
+  "headers": {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+  },
+  "vars": {
+    "key": "value"
+  },
+  "enabled": true
+}
+```
+
+<Note>
+Webhook actions:
+- `GET` requests ignore the `vars` field
+- `POST` requests send `vars` as JSON body: `{ "key": "value" }`
+- Default method is `POST`
+</Note>
+
+---
+
+## Complete Example
+
+Here's a full `config/CRONS.json` with multiple job types:
+
+```json
+[
+  {
+    "name": "heartbeat",
+    "schedule": "*/30 * * * *",
+    "type": "agent",
+    "job": "Read the file at config/HEARTBEAT.md and complete the tasks described there.",
+    "enabled": false
+  },
+  {
+    "name": "daily-check",
+    "schedule": "0 9 * * *",
+    "type": "agent",
+    "job": "Check for dependency updates in package.json and report any outdated packages.",
+    "enabled": false
+  },
+  {
+    "name": "ping",
+    "schedule": "*/1 * * * *",
+    "type": "command",
+    "command": "echo \"pong!\"",
+    "enabled": true
+  },
+  {
+    "name": "cleanup-logs",
+    "schedule": "0 0 * * 0",
+    "type": "command",
+    "command": "ls -la logs/",
+    "enabled": false
+  },
+  {
+    "name": "ping-status",
+    "schedule": "*/5 * * * *",
+    "type": "webhook",
+    "url": "https://example.com/status",
+    "method": "POST",
+    "vars": { "source": "heartbeat" },
+    "enabled": false
+  },
+  {
+    "name": "health-check",
+    "schedule": "*/10 * * * *",
+    "type": "webhook",
+    "url": "https://example.com/health",
+    "method": "GET",
+    "enabled": false
+  },
+  {
+    "name": "daily-check-openai",
+    "schedule": "0 9 * * *",
+    "type": "agent",
+    "job": "Check for dependency updates in package.json and report any outdated packages.",
+    "llm_provider": "openai",
+    "llm_model": "gpt-4o",
+    "enabled": false
+  }
+]
+```
+
+---
+
+## Managing Cron Jobs
+
+### Via Web UI
+
+The web interface provides a visual cron job editor (coming soon).
+
+### Via CLI
+
+Edit the file directly:
+
+```bash
+code config/CRONS.json
+```
+
+Restart the server to apply changes:
+
+```bash
+# Docker
+docker compose restart
+
+# Dev server
+pkill -f next && npm run dev
+```
+
+### Via Agent
+
+Ask your agent to modify cron jobs:
+
+> "Enable the heartbeat cron and change it to run every hour"
+
+> "Create a new cron job that backs up the database daily at 3 AM"
+
+> "Switch the daily-check cron to use GPT-4o instead of Claude"
+
+---
+
+## LLM Model Overrides
+
+Agent-type cron jobs can override the default LLM configuration on a per-job basis.
+
+### Default Configuration
+
+Set via GitHub repository variables:
+
+```bash
+npx thepopebot set-var LLM_PROVIDER anthropic
+npx thepopebot set-var LLM_MODEL claude-sonnet-4-20250514
+```
+
+### Per-Job Override
+
+Add `llm_provider` and `llm_model` to any agent entry:
+
+```json
+{
+  "name": "code-review",
+  "schedule": "0 9 * * 1",
+  "type": "agent",
+  "job": "Review open PRs and leave comments",
+  "llm_provider": "openai",
+  "llm_model": "gpt-4o",
+  "enabled": true
+}
+```
+
+### Required Secrets
+
+The matching API key must exist as a GitHub secret:
+
+```bash
+# For anthropic provider
+npx thepopebot set-agent-secret ANTHROPIC_API_KEY sk-ant-...
+
+# For openai provider
+npx thepopebot set-agent-secret OPENAI_API_KEY sk-...
+
+# For google provider
+npx thepopebot set-agent-secret GOOGLE_API_KEY AIza...
+
+# For custom provider (if endpoint requires auth)
+npx thepopebot set-agent-secret CUSTOM_API_KEY your-key
+```
+
+<Warning>
+For `custom` provider, you must also set these GitHub repository variables:
+- `OPENAI_BASE_URL` - Custom endpoint URL
+- `RUNS_ON` - Set to `self-hosted` for local models
+
+See [LLM Models](/configuration/llm-models) for complete custom provider setup.
+</Warning>
+
+---
+
+## Best Practices
+
+### Use Descriptive Names
+
+❌ `job1`, `test`, `cron`  
+✅ `daily-backup`, `weekly-report`, `hourly-health-check`
+
+### Start with Crons Disabled
+
+Test new crons manually before enabling them in production:
+
+```json
+{
+  "name": "new-job",
+  "schedule": "0 * * * *",
+  "type": "agent",
+  "job": "Test this job description",
+  "enabled": false  // Test first!
+}
+```
+
+Trigger manually via web UI or API, then enable when ready.
+
+### Choose the Right Action Type
+
+| Need | Use |
+|------|-----|
+| Thinking, analysis, decision-making | `agent` |
+| Simple shell command | `command` |
+| Call external API | `webhook` |
+
+### Use Reference Files for Complex Jobs
+
+Instead of long inline job descriptions, reference a markdown file:
+
+```json
+{
+  "name": "heartbeat",
+  "schedule": "*/30 * * * *",
+  "type": "agent",
+  "job": "Read the file at config/HEARTBEAT.md and complete the tasks described there.",
+  "enabled": true
+}
+```
+
+Then create `config/HEARTBEAT.md` with detailed instructions.
+
+### Avoid Overlapping Schedules
+
+Don't schedule resource-intensive jobs at the same time:
+
+```json
+// ❌ Both run at 9 AM - may conflict
+{"schedule": "0 9 * * *", "job": "Heavy task 1"},
+{"schedule": "0 9 * * *", "job": "Heavy task 2"}
+
+// ✅ Stagger by 30 minutes
+{"schedule": "0 9 * * *", "job": "Heavy task 1"},
+{"schedule": "30 9 * * *", "job": "Heavy task 2"}
+```
+
+---
+
+## Debugging
+
+### Check Server Logs
+
+```bash
+# Docker
+docker compose logs -f event-handler
+
+# Dev server
+npm run dev
+```
+
+Cron jobs log when they fire:
+
+```
+[cron] Running job: heartbeat
+[cron] Job heartbeat completed successfully
+```
+
+### Verify Schedule Expressions
+
+Use [crontab.guru](https://crontab.guru/) to validate:
+
+```
+0 9 * * 1-5  →  "At 09:00 on every day-of-week from Monday through Friday"
+```
+
+### Test Jobs Manually
+
+Trigger a job via API without waiting for the schedule:
+
+```bash
+curl -X POST https://your-bot.com/api/jobs \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d '{"task": "Your job description here"}'
+```
+
+### Check Job Results
+
+Agent jobs create PRs automatically:
+1. Check your repository's Pull Requests tab
+2. Look for branches starting with `job/`
+3. Review logs in the PR description
+
+Command/webhook jobs log to server console.
+
+---
+
+## Common Patterns
+
+### Daily Summary Report
+
+```json
+{
+  "name": "daily-summary",
+  "schedule": "0 9 * * *",
+  "type": "agent",
+  "job": "Create a daily summary: 1) Check for new GitHub issues, 2) Review open PRs, 3) Check for dependency updates, 4) Save report to logs/daily-$(date +%Y%m%d).md",
+  "enabled": true
+}
+```
+
+### Weekly Cleanup
+
+```json
+{
+  "name": "weekly-cleanup",
+  "schedule": "0 0 * * 0",
+  "type": "command",
+  "command": "find logs/ -type f -mtime +30 -delete && find data/cache/ -type f -mtime +7 -delete",
+  "enabled": true
+}
+```
+
+### Uptime Monitoring
+
+```json
+{
+  "name": "uptime-check",
+  "schedule": "*/5 * * * *",
+  "type": "webhook",
+  "url": "https://uptime.betterstack.com/api/v1/heartbeat/your-id",
+  "method": "GET",
+  "enabled": true
+}
+```
+
+### Scheduled Research
+
+```json
+{
+  "name": "competitor-pricing",
+  "schedule": "0 10 * * 1",
+  "type": "agent",
+  "job": "Visit competitor websites, extract pricing information, compare with our prices, save analysis to data/competitor-pricing-$(date +%Y%m%d).json",
+  "enabled": true
+}
+```

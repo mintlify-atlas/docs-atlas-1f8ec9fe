@@ -1,0 +1,124 @@
+---
+title: 'thepopebot/auth'
+description: 'Authentication exports for NextAuth integration'
+---
+
+## Overview
+
+The `thepopebot/auth` export provides NextAuth v5 route handlers and session utilities.
+
+## Import
+
+```javascript
+import { GET, POST, auth, getPageAuthState } from 'thepopebot/auth';
+```
+
+## Exports
+
+### Route Handlers
+
+<ParamField path="GET" type="function">
+  NextAuth GET route handler for `[...nextauth]` catch-all route
+</ParamField>
+
+<ParamField path="POST" type="function">
+  NextAuth POST route handler for `[...nextauth]` catch-all route
+</ParamField>
+
+**Usage in `app/api/auth/[...nextauth]/route.js`:**
+
+```javascript
+import { GET, POST } from 'thepopebot/auth';
+export { GET, POST };
+```
+
+### Session Utilities
+
+<ParamField path="auth" type="function">
+  Get current session. Returns session object or `null` if not authenticated.
+</ParamField>
+
+**Server Component:**
+
+```javascript
+import { auth } from 'thepopebot/auth';
+
+export default async function Page() {
+  const session = await auth();
+  if (!session) return <div>Not logged in</div>;
+  return <div>Hello {session.user.email}</div>;
+}
+```
+
+**Server Action:**
+
+```javascript
+'use server';
+import { auth } from 'thepopebot/auth';
+
+export async function myAction() {
+  const session = await auth();
+  if (!session) throw new Error('Unauthorized');
+  // ...
+}
+```
+
+<ParamField path="getPageAuthState" type="function">
+  Get auth state and setup status in one call. Returns `{ session, needsSetup }`.
+</ParamField>
+
+**Usage:**
+
+```javascript
+import { getPageAuthState } from 'thepopebot/auth';
+
+export default async function RootLayout() {
+  const { session, needsSetup } = await getPageAuthState();
+  
+  if (needsSetup) return <SetupWizard />;
+  if (!session) return <LoginPage />;
+  return <Dashboard session={session} />;
+}
+```
+
+## Implementation
+
+The auth module re-exports from `lib/auth/config.js`, which configures NextAuth with:
+
+- **Credentials provider** - Email/password authentication
+- **JWT strategy** - Session stored in httpOnly cookie
+- **Database integration** - User lookup via `lib/db/users.js`
+- **Password hashing** - bcrypt with timing-safe comparison
+
+## First User Setup
+
+`getPageAuthState()` checks if any users exist in the database:
+
+```javascript
+export async function getPageAuthState() {
+  const { getUserCount } = await import('../db/users.js');
+  const [session, userCount] = await Promise.all([
+    auth(),
+    Promise.resolve(getUserCount()),
+  ]);
+
+  return {
+    session,
+    needsSetup: userCount === 0,
+  };
+}
+```
+
+First visit creates an admin account via the setup wizard.
+
+## Environment Variables
+
+<ParamField path="AUTH_SECRET" type="string" required>
+  Secret key for JWT encryption. Generate with `openssl rand -base64 32`.
+</ParamField>
+
+## Related
+
+- [thepopebot/auth/actions](/api/exports/auth#actions) - Server actions for login/logout
+- [thepopebot/auth/components](/api/exports/auth#components) - React components for auth UI
+- [thepopebot/middleware](/api/exports/auth#middleware) - NextAuth middleware for route protection

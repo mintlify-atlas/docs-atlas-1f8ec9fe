@@ -1,0 +1,387 @@
+---
+title: "upgrade"
+description: "Upgrade thepopebot to a new version (install, init, build, commit, push)"
+---
+
+The `upgrade` command automates the full upgrade process: saves local changes, syncs with GitHub, installs the new version, updates templates, rebuilds, commits, and pushes.
+
+## Usage
+
+<CodeGroup>
+```bash Latest
+npx thepopebot upgrade
+```
+
+```bash Beta
+npx thepopebot upgrade @beta
+```
+
+```bash Specific Version
+npx thepopebot upgrade 1.2.72
+```
+</CodeGroup>
+
+Alias: `npx thepopebot update`
+
+## Version Targeting
+
+### Latest Stable
+
+```bash
+npx thepopebot upgrade
+```
+
+Installs the latest stable release from npm.
+
+### Beta/RC Channels
+
+```bash
+npx thepopebot upgrade @beta
+npx thepopebot upgrade @rc
+```
+
+Installs the latest version from a dist-tag. Dist-tags:
+
+- `@latest` — Latest stable release (default)
+- `@beta` — Beta releases (pre-release testing)
+- `@rc` — Release candidates (near-final testing)
+
+### Specific Version
+
+```bash
+npx thepopebot upgrade 1.2.72
+```
+
+Installs an exact version number. Use this to:
+
+- Downgrade to a previous version
+- Pin to a specific release
+- Test a particular version
+
+## Upgrade Workflow
+
+The `upgrade` command performs these steps automatically:
+
+### 1. Pre-Flight Checks
+
+- Verifies you're in a thepopebot project (checks for `thepopebot` in `package.json` dependencies)
+- Resolves target version from npm registry
+- Displays version change: `thepopebot 1.0.0 → 1.1.0`
+- Exits early if already up to date
+
+### 2. Save Local Changes
+
+If you have uncommitted changes, the upgrade commits them:
+
+```bash
+git add -A
+git commit -m "save local changes before thepopebot upgrade"
+```
+
+This ensures your work isn't lost during the upgrade.
+
+### 3. Sync with Remote
+
+Pulls the latest changes from GitHub:
+
+```bash
+git pull --rebase
+```
+
+If there are **merge conflicts**, the upgrade stops and displays instructions:
+
+```
+Your local changes conflict with changes on GitHub.
+This means someone (or your bot) changed the same files you did.
+
+To fix this:
+  1. Open the files listed above and look for <<<<<<< markers
+  2. Edit each file to keep the version you want
+  3. Run: git add -A && git rebase --continue
+  4. Then run the upgrade again
+```
+
+### 4. Install New Version
+
+```bash
+npm install thepopebot@<version>
+```
+
+Updates `package.json`, `package-lock.json`, and `node_modules/`.
+
+### 5. Update Project Files
+
+Runs `init` using the **new version's templates**:
+
+```bash
+npx thepopebot init
+```
+
+This updates managed files (`.github/workflows/`, `docker-compose.yml`, etc.) to match the new package version. See [Init](/cli/init) for details.
+
+### 6. Clear Build Cache
+
+Deletes `.next/` to force a clean rebuild.
+
+### 7. Build
+
+```bash
+npm run build
+```
+
+Compiles the Next.js app with the new version.
+
+**If the build fails**, the upgrade stops and displays recovery instructions:
+
+```
+Build failed. The upgrade has been applied but the project does not build.
+Fix the build errors, then run:
+
+  npm run build
+  git add -A && git commit -m "upgrade thepopebot to 1.1.0"
+  git push
+```
+
+### 8. Commit Upgrade
+
+```bash
+git add -A
+git commit -m "upgrade thepopebot to <version>"
+```
+
+Commits `package.json`, `package-lock.json`, updated templates, and any new files.
+
+### 9. Push to GitHub
+
+```bash
+git push
+```
+
+Pushes the upgrade commit to `main`. This triggers the `rebuild-event-handler.yml` workflow on your server, which:
+
+1. Detects the version change
+2. Runs `thepopebot init` inside the container
+3. Updates `THEPOPEBOT_VERSION` in the server's `.env`
+4. Pulls the new Docker image
+5. Stops the old container and starts a new one
+6. Runs `npm install --omit=dev`
+7. Builds `.next` and reloads PM2
+
+### 10. Restart Docker (Local Only)
+
+If `docker-compose.yml` exists and containers are running:
+
+```bash
+docker compose down
+docker compose up -d
+```
+
+Restarts local containers with the new version.
+
+### 11. Summary
+
+```
+Upgraded thepopebot 1.0.0 → 1.1.0
+Done!
+```
+
+## Example Output
+
+### Successful Upgrade
+
+```
+thepopebot 1.0.0 → 1.1.0
+
+You have local changes. Saving them before upgrading...
+
+Syncing with remote...
+
+Installing thepopebot@1.1.0...
+
+Updating project files...
+
+Scaffolding thepopebot project...
+
+  Updated .github/workflows/run-job.yml
+  Updated docker-compose.yml
+
+Done!
+
+Building...
+
+  ✓ Compiled successfully
+
+Pushing to GitHub...
+
+Restarting Docker containers...
+
+Upgraded thepopebot 1.0.0 → 1.1.0
+Done!
+```
+
+### Already Up to Date
+
+```
+thepopebot 1.1.0 → 1.1.0
+Already up to date. Nothing to do.
+```
+
+### Merge Conflict
+
+```
+thepopebot 1.0.0 → 1.1.0
+
+Syncing with remote...
+
+Your local changes conflict with changes on GitHub.
+This means someone (or your bot) changed the same files you did.
+
+To fix this:
+  1. Open the files listed above and look for <<<<<<< markers
+  2. Edit each file to keep the version you want
+  3. Run: git add -A && git rebase --continue
+  4. Then run the upgrade again
+```
+
+### Build Failure
+
+```
+thepopebot 1.0.0 → 1.1.0
+
+...
+
+Building...
+
+  ✖ Failed to compile
+
+Build failed. The upgrade has been applied but the project does not build.
+Fix the build errors, then run:
+
+  npm run build
+  git add -A && git commit -m "upgrade thepopebot to 1.1.0"
+  git push
+```
+
+## Recovering from a Failed Upgrade
+
+If an upgrade fails or leaves your server in a broken state, SSH into your server and rebuild manually:
+
+```bash
+# Reinstall dependencies
+docker exec thepopebot-event-handler npm install --omit=dev
+
+# Rebuild Next.js
+docker exec thepopebot-event-handler bash -c 'rm -rf .next-new .next-old && NEXT_BUILD_DIR=.next-new npm run build && mv .next .next-old 2>/dev/null; mv .next-new .next && rm -rf .next-old'
+
+# Restart PM2
+docker exec thepopebot-event-handler npx pm2 restart all
+```
+
+### Merge Conflicts in Upgrade PR
+
+If an automated upgrade PR (created by `upgrade-event-handler.yml` workflow) has merge conflicts, resolve them:
+
+**Option 1: GitHub UI**
+
+1. Go to the PR in GitHub
+2. Click "Resolve conflicts"
+3. Edit files to keep the version you want
+4. Mark as resolved and merge
+
+**Option 2: Locally**
+
+```bash
+git fetch origin
+git checkout upgrade/thepopebot-<version>-<timestamp>
+git merge main
+# Resolve conflicts in your editor
+git add .
+git commit
+git push
+```
+
+Once the PR merges, `rebuild-event-handler.yml` runs automatically.
+
+## Automated Upgrades
+
+Two GitHub Actions workflows handle automated upgrades:
+
+### 1. `upgrade-event-handler.yml` (Manual Trigger)
+
+Run from the Actions tab: **Upgrade Event Handler** > **Run workflow**
+
+This workflow:
+
+1. Clones your repo into the event handler container
+2. Runs `npm update thepopebot`
+3. Creates an `upgrade/thepopebot-<version>-<timestamp>` branch if the version changed
+4. Opens a PR with auto-merge enabled
+
+This **only updates `package.json` and `package-lock.json`**. It doesn't run `init`, rebuild, or restart.
+
+### 2. `rebuild-event-handler.yml` (On Push to Main)
+
+Triggered automatically when the upgrade PR merges.
+
+If `THEPOPEBOT_VERSION` in `package.json` changed, this workflow:
+
+1. Runs `npx thepopebot init` to update templates
+2. Commits template changes to `main`
+3. Updates `THEPOPEBOT_VERSION` in the server's `.env`
+4. Pulls the new Docker image
+5. Restarts the container
+6. Runs `npm install --omit=dev`
+7. Builds `.next`
+8. Reloads PM2
+
+If the version didn't change (normal code push), it does a fast rebuild only (steps 6-8).
+
+## Diagnostic Commands
+
+Use these to debug upgrade issues:
+
+```bash
+# Check if container is running
+docker ps -a | grep thepopebot-event-handler
+
+# View container logs
+docker logs thepopebot-event-handler --tail 50
+
+# Check PM2 status inside container
+docker exec thepopebot-event-handler npx pm2 status
+
+# View app logs
+docker exec thepopebot-event-handler npx pm2 logs --lines 30
+```
+
+## Version History
+
+Check your current version:
+
+```bash
+cat .env | grep THEPOPEBOT_VERSION
+```
+
+List available versions:
+
+```bash
+npm view thepopebot versions
+```
+
+View changelog:
+
+```bash
+npm view thepopebot@<version>
+```
+
+## Downgrading
+
+To downgrade to a previous version, specify the version number:
+
+```bash
+npx thepopebot upgrade 1.0.5
+```
+
+The same workflow applies: saves changes, installs old version, runs `init`, rebuilds, commits, pushes.
+
+**Warning**: Downgrading may require manual template fixes if newer versions introduced breaking changes.

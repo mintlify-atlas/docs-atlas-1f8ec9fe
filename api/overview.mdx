@@ -1,0 +1,89 @@
+---
+title: 'API Overview'
+description: 'External HTTP API for creating jobs, checking status, and receiving webhooks'
+---
+
+## Overview
+
+The Pope Bot framework exposes a REST API at `/api/*` endpoints for external integrations. These routes are designed for **external callers only** — GitHub Actions, Telegram webhooks, cURL scripts, and third-party services.
+
+<Warning>
+**Do NOT use `/api` routes from browser UI.** Browser-facing features must use Server Actions (`'use server'` functions) with session authentication. The only exception is chat streaming at `/stream/chat`.
+</Warning>
+
+## Base URL
+
+All API routes are mounted under `/api`:
+
+```
+https://your-domain.com/api/{endpoint}
+```
+
+## Response Format
+
+All responses are JSON with appropriate HTTP status codes:
+
+### Success Response
+
+```json
+{
+  "job_id": "abc123",
+  "branch": "job/abc123",
+  "pr_url": "https://github.com/owner/repo/pull/42"
+}
+```
+
+### Error Response
+
+```json
+{
+  "error": "Missing job field"
+}
+```
+
+## Status Codes
+
+| Code | Meaning |
+|------|----------|
+| `200` | Success |
+| `400` | Bad Request - invalid or missing parameters |
+| `401` | Unauthorized - missing or invalid API key |
+| `404` | Not Found - unknown endpoint |
+| `500` | Internal Server Error |
+
+## Error Handling
+
+All endpoints return consistent error objects:
+
+```json
+{
+  "error": "Human-readable error message"
+}
+```
+
+Common errors:
+- `"Unauthorized"` - Missing or invalid `x-api-key` header
+- `"Missing job field"` - Required request body field not provided
+- `"Failed to create job"` - Internal error during job creation
+- `"Not found"` - Unknown endpoint path
+
+## Authentication
+
+See [Authentication](/api/authentication) for details on API key management.
+
+## Available Endpoints
+
+### Job Management
+
+- [POST /api/create-job](/api/create-job) - Create a new agent job
+- [GET /api/jobs/status](/api/job-status) - Check job status and results
+
+### Webhooks
+
+- [POST /api/telegram/register](/api/telegram#register) - Register Telegram bot webhook
+- [POST /api/telegram/webhook](/api/telegram#webhook) - Receive Telegram messages
+- [POST /api/github/webhook](/api/github-webhook) - Receive GitHub events
+
+### Health Check
+
+- `GET /api/ping` - Returns `{"message": "Pong!"}` (public, no auth required)

@@ -1,0 +1,151 @@
+---
+title: Introduction
+description: An autonomous AI agent framework where your repository IS the agent
+---
+
+## What is The Pope Bot?
+
+The Pope Bot is a framework for creating autonomous AI agents with a unique architecture: **the repository IS the agent**. Every action your agent takes is a git commit. You can see exactly what it did, when, and why. If it makes a mistake, revert it. Want to clone your agent? Fork the repo — code, personality, scheduled jobs, and full history all go with your fork.
+
+## Why The Pope Bot?
+
+### Repository IS the Agent
+
+Every action your agent takes is a git commit. You can see exactly what it did, when, and why. If it screws up, revert it. Want to clone your agent? Fork the repo — code, personality, scheduled jobs, full history, all of it goes with your fork.
+
+This transparency gives you complete control and auditability of your agent's behavior.
+
+### Free Compute Built In
+
+Every GitHub account comes with free cloud computing time. The Pope Bot uses GitHub Actions to run your agent tasks. One task or a hundred in parallel — the compute is already included with your GitHub account.
+
+No need to set up separate cloud infrastructure or pay for additional compute resources to get started.
+
+### Self-Evolving Agent
+
+The agent modifies its own code through pull requests. Every change is auditable, every change is reversible. You stay in control.
+
+The agent can improve itself, add new features, and adapt to new requirements — all through the same PR workflow you use for regular development.
+
+## How It Works
+
+The Pope Bot uses a two-layer architecture:
+
+1. **Event Handler** - A Next.js application that handles webhooks, chat interfaces (web and Telegram), and scheduled jobs
+2. **Docker Agent** - Autonomous task execution in GitHub Actions using Pi or Claude Code
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                                                                      │
+│  ┌─────────────────┐         ┌─────────────────┐                     │
+│  │  Event Handler  │ ──1──►  │     GitHub      │                     │
+│  │  (creates job)  │         │ (job/* branch)  │                     │
+│  └────────▲────────┘         └────────┬────────┘                     │
+│           │                           │                              │
+│           │                           2 (triggers run-job.yml)       │
+│           │                           │                              │
+│           │                           ▼                              │
+│           │                  ┌─────────────────┐                     │
+│           │                  │  Docker Agent   │                     │
+│           │                  │  (runs Pi, PRs) │                     │
+│           │                  └────────┬────────┘                     │
+│           │                           │                              │
+│           │                           3 (creates PR)                 │
+│           │                           │                              │
+│           │                           ▼                              │
+│           │                  ┌─────────────────┐                     │
+│           │                  │     GitHub      │                     │
+│           │                  │   (PR opened)   │                     │
+│           │                  └────────┬────────┘                     │
+│           │                           │                              │
+│           │                           4a (auto-merge.yml)            │
+│           │                           4b (rebuild-event-handler.yml) │
+│           │                           │                              │
+│           5 (notify-pr-complete.yml / │                              │
+│           │  notify-job-failed.yml)   │                              │
+│           └───────────────────────────┘                              │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Workflow
+
+1. You interact with your bot via the web chat interface or Telegram
+2. The Event Handler creates a job branch in your GitHub repository
+3. GitHub Actions spins up a Docker container with the Pi coding agent
+4. The agent executes the task, commits the results, and opens a PR
+5. Auto-merge handles the PR (if enabled)
+6. You get a notification when the job is complete
+
+## Key Features
+
+### Multiple Interaction Modes
+
+- **Web Chat** - Built-in web interface for chatting with your agent
+- **Telegram** - Optional Telegram bot integration
+- **Webhook API** - Programmatic job creation via REST API
+- **Cron Jobs** - Schedule recurring tasks
+
+### Flexible LLM Support
+
+The Pope Bot supports multiple LLM providers:
+
+| Provider | Models | Notes |
+|----------|--------|-------|
+| Anthropic | Claude Sonnet, Opus, Haiku | Default provider |
+| OpenAI | GPT-4o, GPT-4 | Full support |
+| Google | Gemini 2.5 Pro | Full support |
+| Custom | Any OpenAI-compatible API | Via base URL |
+
+You can use different models for chat vs agent jobs, or even different providers per scheduled task.
+
+### Chat vs Agent LLM
+
+Your bot has two sides:
+
+- **Chat** - The conversational part. Runs on your server and responds in real time when you talk to it in the web UI or Telegram.
+- **Agent** - The worker. Spins up a separate job in a Docker container on GitHub Actions for code writing, file modifications, and complex tasks.
+
+By default, both use the same model, but you can configure different models for each during setup.
+
+### Skills System
+
+Extend your agent's capabilities with a plugin-based skills system:
+
+- **browser-tools** - Puppeteer-based web automation (navigation, screenshots, scraping)
+- **brave-search** - Web search integration
+- **llm-secrets** - Secure credential management
+- **modify-self** - Allow the agent to modify its own code
+- **Custom skills** - Build your own skills following the plugin pattern
+
+### Using Claude Subscription
+
+If you have a Claude Pro (\$20/mo) or Max (\$100+/mo) subscription, you can use it to power your agent jobs instead of paying per API call. During setup, choose Anthropic as your agent provider and provide your Claude OAuth token.
+
+Generate your token:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+claude setup-token
+```
+
+Your agent jobs will count toward your Claude.ai subscription limits instead of API usage.
+
+## Use Cases
+
+- **Code Automation** - Automatically refactor code, update dependencies, generate documentation
+- **Monitoring & Alerts** - Scheduled jobs that check systems and notify you of issues
+- **Content Generation** - Blog posts, documentation, reports
+- **Data Processing** - ETL tasks, web scraping, data analysis
+- **Self-Improvement** - Agent can propose and implement improvements to itself
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get your first agent running in minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Detailed installation and setup guide
+  </Card>
+</CardGroup>

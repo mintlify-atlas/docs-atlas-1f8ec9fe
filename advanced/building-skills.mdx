@@ -1,0 +1,586 @@
+---
+title: 'Building Skills'
+description: 'Complete guide to creating custom skills for your Pope Bot agent'
+---
+
+## What is a Skill?
+
+A skill is a folder containing a `SKILL.md` file and optionally script files. The agent teaches itself how to use them by reading the SKILL.md, then runs the scripts via bash.
+
+**Key principles:**
+
+- **No new tools registered** — Skills are not TypeScript functions or API endpoints
+- **No build step** — Just markdown and scripts
+- **Works with both agents** — Pi and Claude Code share the same `skills/active/` directory
+- **Progressive disclosure** — Agent only reads full instructions when the skill is relevant
+
+## How Skills Work
+
+### Directory Structure
+
+```
+skills/                    # All available skills
+├── brave-search/          # Example skill
+│   ├── SKILL.md          # Instructions
+│   ├── package.json      # Dependencies
+│   ├── search.js         # Script
+│   └── content.js        # Script
+├── transcribe/           # Another skill
+│   ├── SKILL.md
+│   └── transcribe.sh
+└── active/               # Activated skills (symlinks)
+    ├── brave-search -> ../brave-search
+    └── transcribe -> ../transcribe
+```
+
+### Loading Mechanism
+
+**On-demand (progressive disclosure):**
+
+1. Agent starts, scans skill directories
+2. Reads **only** name + description from each `SKILL.md` frontmatter
+3. Puts skill descriptions in system prompt
+4. Full instructions are **not** loaded until agent decides skill is relevant
+
+### Runtime Flow Example
+
+Using `brave-search` as an example:
+
+1. **Startup:** Agent scans skills, sees `brave-search/SKILL.md`, puts description in system prompt
+2. **User request:** "Search for python async tutorials"
+3. **Skill selection:** Agent sees the description, decides brave-search is relevant
+4. **Load instructions:** Agent reads the full SKILL.md to learn the commands
+5. **Execute:** Agent runs `skills/brave-search/search.js "python async tutorials"`
+6. **Script runs:** `search.js` runs as child process, reads `$BRAVE_API_KEY`, calls API, prints to stdout
+7. **Response:** Agent reads results, responds to user
+
+## SKILL.md Format
+
+Every skill must have a `SKILL.md` file with YAML frontmatter:
+
+```markdown
+---
+name: skill-name-in-kebab-case
+description: One sentence describing what the skill does and when to use it.
+---
+
+# Skill Name
+
+## Setup
+
+Optional setup instructions (e.g., npm install, API keys)
+
+## Usage
+
+```bash
+skills/skill-name/script.sh <args>
+```
+
+Detailed usage examples and documentation.
+```
+
+### Frontmatter Fields
+
+- **`name`** (required) — kebab-case, must match folder name
+- **`description`** (required) — appears in system prompt under "Active skills"
+
+### Body Content
+
+- **Setup section** — Installation, dependencies, API keys
+- **Usage section** — Command examples with arguments
+- **Use project-root-relative paths** — Always `skills/skill-name/script.sh`, not `./script.sh`
+
+## Real Example: Brave Search
+
+### Directory Structure
+
+```
+skills/brave-search/
+├── SKILL.md
+├── package.json
+├── search.js
+└── content.js
+```
+
+### SKILL.md
+
+```markdown
+---
+name: brave-search
+description: Web search and content extraction via Brave Search API. Use for searching documentation, facts, or any web content.
+---
+
+# Brave Search
+
+## Setup
+
+Requires BRAVE_API_KEY environment variable.
+
+```bash
+cd skills/brave-search && npm install
+```
+
+## Search
+
+```bash
+skills/brave-search/search.js "query"              # Basic search (5 results)
+skills/brave-search/search.js "query" -n 10        # More results (max 20)
+skills/brave-search/search.js "query" --content    # Include page content
+skills/brave-search/search.js "query" --freshness pw  # Last week only
+```
+
+## Extract Page Content
+
+```bash
+skills/brave-search/content.js https://example.com
+```
+```
+
+### package.json
+
+```json
+{
+  "name": "brave-search",
+  "dependencies": {
+    "jsdom": "^24.0.0",
+    "@mozilla/readability": "^0.5.0",
+    "turndown": "^7.1.2"
+  }
+}
+```
+
+### search.js (simplified)
+
+```javascript
+#!/usr/bin/env node
+const apiKey = process.env.BRAVE_API_KEY
+if (!apiKey) {
+  console.error('Error: BRAVE_API_KEY not set')
+  process.exit(1)
+}
+
+const query = process.argv[2]
+const response = await fetch(
+  `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}`,
+  { headers: { 'X-Subscription-Token': apiKey } }
+)
+const data = await response.json()
+console.log(JSON.stringify(data.web.results, null, 2))
+```
+
+## Building a Simple Bash Skill
+
+Most skills are simple bash scripts. Here's a complete example:
+
+### transcribe skill
+
+**skills/transcribe/SKILL.md:**
+
+```markdown
+---
+name: transcribe
+description: Speech-to-text transcription using Groq Whisper API. Supports m4a, mp3, wav, ogg, flac, webm.
+---
+
+# Transcribe
+
+Speech-to-text using Groq Whisper API.
+
+## Setup
+
+Requires GROQ_API_KEY environment variable.
+
+## Usage
+
+```bash
+skills/transcribe/transcribe.sh <audio-file>
+```
+```
+
+**skills/transcribe/transcribe.sh:**
+
+```bash
+#!/bin/bash
+if [ -z "$1" ]; then
+  echo "Usage: transcribe.sh <audio-file>"
+  exit 1
+fi
+
+if [ -z "$GROQ_API_KEY" ]; then
+  echo "Error: GROQ_API_KEY not set"
+  exit 1
+fi
+
+curl -s -X POST "https://api.groq.com/openai/v1/audio/transcriptions" \
+  -H "Authorization: Bearer $GROQ_API_KEY" \
+  -F "file=@${1}" \
+  -F "model=whisper-large-v3-turbo" \
+  -F "response_format=text"
+```
+
+**Make it executable:**
+
+```bash
+chmod +x skills/transcribe/transcribe.sh
+```
+
+## Building a Node.js Skill
+
+When bash + curl isn't sufficient (e.g., HTML parsing, complex API clients), use Node.js:
+
+### Requirements
+
+1. **package.json** — Declare dependencies
+2. **Shebang** — `#!/usr/bin/env node` at the top of .js files
+3. **Executable** — `chmod +x script.js`
+
+### Example: YouTube Transcript
+
+**skills/youtube-transcript/SKILL.md:**
+
+```markdown
+---
+name: youtube-transcript
+description: Fetch YouTube video transcripts. Use when you need to analyze video content.
+---
+
+# YouTube Transcript
+
+## Setup
+
+```bash
+cd skills/youtube-transcript && npm install
+```
+
+## Usage
+
+```bash
+skills/youtube-transcript/get.js <video-url-or-id>
+```
+```
+
+**skills/youtube-transcript/package.json:**
+
+```json
+{
+  "name": "youtube-transcript",
+  "dependencies": {
+    "youtube-transcript": "^1.0.6"
+  }
+}
+```
+
+**skills/youtube-transcript/get.js:**
+
+```javascript
+#!/usr/bin/env node
+import { YoutubeTranscript } from 'youtube-transcript'
+
+const videoId = process.argv[2]
+if (!videoId) {
+  console.error('Usage: get.js <video-url-or-id>')
+  process.exit(1)
+}
+
+try {
+  const transcript = await YoutubeTranscript.fetchTranscript(videoId)
+  console.log(transcript.map(t => t.text).join(' '))
+} catch (err) {
+  console.error('Error:', err.message)
+  process.exit(1)
+}
+```
+
+## Skill Activation
+
+Skills are activated by symlinking into `skills/active/`:
+
+```bash
+# Activate a skill
+ln -s ../skill-name skills/active/skill-name
+
+# Deactivate a skill
+rm skills/active/skill-name
+
+# List active skills
+ls -l skills/active/
+```
+
+**Both agents share the same activation:**
+
+- `.pi/skills` → `skills/active/`
+- `.claude/skills` → `skills/active/`
+- One activation controls both agents
+
+## Credential Setup
+
+If a skill needs an API key:
+
+### Single-line Secrets
+
+```bash
+npx thepopebot set-agent-llm-secret BRAVE_API_KEY "sk-abc123..."
+```
+
+This creates a GitHub secret with `AGENT_LLM_` prefix, exposed as an env var in the Docker container.
+
+**Also add to `.env` for local development:**
+
+```bash
+echo "AGENT_LLM_BRAVE_API_KEY=sk-abc123..." >> .env
+```
+
+### Multi-line Secrets (JSON files)
+
+For service account files, pipe via stdin:
+
+```bash
+npx thepopebot set-agent-llm-secret GOOGLE_CREDENTIALS < credentials.json
+```
+
+**Avoid `$(cat credentials.json)`** — it can break on special characters and newlines.
+
+### Secret Prefixes
+
+| Prefix | Accessible to Agent? | Use Case |
+|--------|---------------------|----------|
+| `AGENT_` | **No** (filtered) | Protected secrets (database keys, admin tokens) |
+| `AGENT_LLM_` | **Yes** | Skill API keys, service credentials |
+
+See [Security](/advanced/security) for details on the `env-sanitizer` extension.
+
+## browser-tools Skill
+
+A special built-in skill that uses **Chrome DevTools Protocol (CDP) directly** — not Playwright, not Puppeteer.
+
+### How It Works
+
+1. Chrome runs with `--remote-debugging-port=9222`
+2. Standalone JS scripts connect to CDP
+3. Agent calls scripts via bash
+
+### Available Scripts
+
+- `browser-nav.js` — Navigate to URLs
+- `browser-eval.js` — Execute JS in the active tab
+- `browser-search.js` — Google search
+- `browser-screenshot.js` — Take screenshots
+- `browser-click.js` — Click elements
+- `browser-picker.js` — Interactive element selector
+
+### Requirements
+
+- Visible Chrome window (not headless)
+- `--remote-debugging-port=9222` flag
+- Node.js
+
+## Finding More Skills
+
+### pi-skills Repository
+
+Official skills collection: [github.com/badlogic/pi-skills](https://github.com/badlogic/pi-skills)
+
+**Available skills:**
+
+- brave-search
+- browser-tools
+- gccli (Google Calendar CLI)
+- gdcli (Google Drive CLI)
+- gmcli (Gmail CLI)
+- subagent
+- transcribe
+- vscode
+- youtube-transcript
+
+### Installation
+
+**For The Pope Bot:**
+
+```bash
+# Clone to a convenient location
+git clone https://github.com/badlogic/pi-skills ~/pi-skills
+
+# Symlink individual skills
+ln -s ~/pi-skills/brave-search skills/active/brave-search
+ln -s ~/pi-skills/transcribe skills/active/transcribe
+```
+
+**Compatible with:**
+
+- pi-coding-agent
+- Claude Code
+- Codex CLI
+- Amp
+- Droid (Factory)
+
+All follow the **Agent Skills standard** (SKILL.md format).
+
+## Security Considerations
+
+### LLM-Accessible Secrets
+
+Skills run via bash. The agent has access to environment variables:
+
+```bash
+# Agent COULD run this:
+echo $AGENT_LLM_BRAVE_API_KEY
+```
+
+**Mitigation:**
+
+- Protected secrets (`AGENT_*`) are filtered by `env-sanitizer` extension
+- LLM-accessible secrets (`AGENT_LLM_*`) are deliberately left available for skills
+- Only give the agent API keys it needs for legitimate tasks
+- Rotate keys regularly
+
+### Code Execution
+
+Skills execute arbitrary code. Only install skills from trusted sources:
+
+- Official pi-skills repository
+- Skills you wrote yourself
+- Community skills you've reviewed
+
+**Never install unreviewed skills from unknown sources.**
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Keep Skills Simple" icon="minimize">
+    One skill = one purpose. Avoid monolithic skills that do too much.
+  </Card>
+  
+  <Card title="Use Descriptive Names" icon="tag">
+    Skill names should be clear and match their function. Use kebab-case.
+  </Card>
+  
+  <Card title="Write Clear Descriptions" icon="book">
+    The description is how the agent decides to use the skill. Be specific about when to use it.
+  </Card>
+  
+  <Card title="Include Examples" icon="code">
+    Show real command examples in SKILL.md. The agent learns by example.
+  </Card>
+  
+  <Card title="Handle Errors Gracefully" icon="shield-check">
+    Check for required env vars, validate arguments, print helpful error messages.
+  </Card>
+  
+  <Card title="Use Project-Relative Paths" icon="folder-tree">
+    Always use `skills/skill-name/script.sh`, not `./script.sh` or relative paths.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Skill Not Appearing in System Prompt
+
+**Cause:** Not activated or SKILL.md missing frontmatter
+
+**Solution:**
+```bash
+# Check activation
+ls -l skills/active/
+
+# Check SKILL.md has frontmatter
+head skills/skill-name/SKILL.md
+```
+
+### Skill Script Not Executable
+
+**Cause:** Missing execute permissions
+
+**Solution:**
+```bash
+chmod +x skills/skill-name/script.sh
+```
+
+### Dependencies Not Found
+
+**Cause:** npm install not run in skill directory
+
+**Solution:**
+```bash
+cd skills/skill-name
+npm install
+```
+
+**In Docker:** Dependencies are installed automatically by the entrypoint.
+
+### API Key Not Found
+
+**Cause:** Secret not set or wrong prefix
+
+**Solution:**
+```bash
+# Set secret for agent
+npx thepopebot set-agent-llm-secret API_KEY "value"
+
+# Add to .env for local dev
+echo "AGENT_LLM_API_KEY=value" >> .env
+```
+
+## Advanced Patterns
+
+### Multi-Script Skills
+
+One SKILL.md can document multiple related scripts:
+
+```markdown
+---
+name: github-tools
+description: GitHub API operations (issues, PRs, releases)
+---
+
+# GitHub Tools
+
+## Create Issue
+```bash
+skills/github-tools/create-issue.sh "Title" "Body"
+```
+
+## List PRs
+```bash
+skills/github-tools/list-prs.sh
+```
+```
+
+### Skills with Configuration Files
+
+Skills can read config files:
+
+```bash
+# skills/my-skill/config.json
+{
+  "api_url": "https://api.example.com",
+  "timeout": 30
+}
+```
+
+```bash
+# skills/my-skill/script.sh
+#!/bin/bash
+CONFIG=$(cat skills/my-skill/config.json)
+API_URL=$(echo $CONFIG | jq -r '.api_url')
+curl "$API_URL/endpoint"
+```
+
+### Skills with State
+
+Skills can maintain state in files:
+
+```bash
+# skills/counter/increment.sh
+#!/bin/bash
+COUNT_FILE=skills/counter/count.txt
+COUNT=$(cat $COUNT_FILE 2>/dev/null || echo 0)
+NEW_COUNT=$((COUNT + 1))
+echo $NEW_COUNT > $COUNT_FILE
+echo "Count: $NEW_COUNT"
+```
+
+## Related Documentation
+
+- [Security](/advanced/security) — Secret filtering and credential management
+- [Docker Agent](/docker-agent) — How skills run in Docker agent containers
+- [Skills Format Docs](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/skills.md) — Official specification

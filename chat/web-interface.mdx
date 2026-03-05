@@ -1,0 +1,294 @@
+---
+title: Web Chat Interface
+description: Built-in web chat interface with streaming responses, file uploads, and chat history
+---
+
+The Pope Bot includes a full-featured web chat interface out of the box at your `APP_URL`. No additional configuration needed.
+
+## Features
+
+The web interface provides a rich chat experience with the following capabilities:
+
+### Real-time Streaming Responses
+
+AI responses stream in real-time via the Vercel AI SDK. The system uses the AI SDK's `UIMessage` format with Server-Sent Events (SSE) to deliver token-by-token streaming.
+
+```javascript
+// From lib/chat/api.js
+const stream = createUIMessageStream({
+  execute: async ({ writer }) => {
+    const chunks = chatStream(threadId, userText, attachments, streamOptions);
+    
+    for await (const chunk of chunks) {
+      if (chunk.type === 'text') {
+        writer.write({ type: 'text-delta', id: textId, delta: chunk.text });
+      }
+    }
+  },
+});
+```
+
+The streaming endpoint is located at `/stream/chat` and is implemented in `lib/chat/api.js`.
+
+### File Uploads
+
+Send images, PDFs, and text files for the AI to process. The chat input supports drag-and-drop and clipboard paste.
+
+**Supported file types:**
+
+- **Images**: JPEG, PNG, GIF, WebP
+- **Documents**: PDF
+- **Text files**: Plain text, Markdown, CSV, JSON, HTML, CSS, JavaScript, TypeScript, Python, and more
+
+The system handles up to 5 files per message. Files are processed differently based on type:
+
+- **Images and PDFs** → Passed as visual attachments to the LLM
+- **Text files** → Base64 decoded and inlined into the message text
+
+```javascript
+// From lib/chat/api.js
+for (const part of fileParts) {
+  const { mediaType, url } = part;
+  
+  if (mediaType.startsWith('image/') || mediaType === 'application/pdf') {
+    attachments.push({ category: 'image', mimeType: mediaType, dataUrl: url });
+  } else if (mediaType.startsWith('text/')) {
+    const base64Data = url.split(',')[1];
+    const textContent = Buffer.from(base64Data, 'base64').toString('utf-8');
+    userText += `\n\nFile: ${fileName}\n\`\`\`\n${textContent}\n\`\`\``;
+  }
+}
+```
+
+File input handling is implemented in `lib/chat/components/chat-input.jsx`.
+
+### Chat History
+
+Browse past conversations grouped by date. The sidebar displays all chats sorted by most recent activity.
+
+- Resume any chat by clicking on it
+- Star important conversations for quick access
+- Delete individual chats or clear all history
+- Rename chats with custom titles
+
+Chat history is stored in SQLite and accessed via Server Actions:
+
+```javascript
+// From lib/chat/actions.js
+export async function getChats(limit) {
+  const user = await requireAuth();
+  return db
+    .select()
+    .from(chats)
+    .where(or(eq(chats.userId, user.id), eq(chats.userId, 'telegram')))
+    .orderBy(desc(chats.updatedAt))
+    .all();
+}
+```
+
+### Job Management
+
+Create and monitor agent jobs from the Swarm page. The interface shows:
+
+- Active jobs with real-time status updates
+- Completed jobs with success/failure indicators
+- Job logs for debugging
+- Ability to trigger new jobs manually
+
+### Notifications
+
+Receive job completion alerts with unread badges. The notification system:
+
+- Displays a badge count of unread notifications
+- Shows notification details in a dedicated page
+- Marks notifications as read when viewed
+- Persists to the database for reliability
+
+```javascript
+// From lib/chat/actions.js
+export async function getNotifications() {
+  await requireAuth();
+  return dbGetNotifications();
+}
+
+export async function getUnreadNotificationCount() {
+  await requireAuth();
+  return dbGetUnreadCount();
+}
+```
+
+### API Key Management
+
+Generate and manage API keys from the Settings page. Users can:
+
+- Create a new API key (replaces any existing key)
+- View the API key once immediately after creation
+- Delete the API key when no longer needed
+
+API keys are stored as SHA-256 hashes in the database using timing-safe comparison for validation.
+
+## Authentication
+
+The web interface uses **NextAuth v5** (Auth.js) with a Credentials provider for email/password authentication.
+
+### First-Time Setup
+
+On first visit, the system automatically creates an admin account. The setup flow:
+
+1. User visits the app URL
+2. System checks if any users exist in the database
+3. If `userCount === 0`, displays account creation form
+4. User creates email/password credentials
+5. Session cookie is issued
+
+```javascript
+// From lib/auth/index.js
+export async function getPageAuthState() {
+  const { getUserCount } = await import('../db/users.js');
+  const [session, userCount] = await Promise.all([
+    auth(),
+    Promise.resolve(getUserCount()),
+  ]);
+
+  return {
+    session,
+    needsSetup: userCount === 0,
+  };
+}
+```
+
+### Session Management
+
+Sessions are stored as JWT tokens in httpOnly cookies. The `requireAuth()` helper validates sessions in Server Actions:
+
+```javascript
+// From lib/chat/actions.js
+async function requireAuth() {
+  const session = await auth();
+  if (!session?.user?.id) {
+    throw new Error('Unauthorized');
+  }
+  return session.user;
+}
+```
+
+### Environment Variables
+
+Auth requires the `AUTH_SECRET` environment variable for session encryption. Generate one with:
+
+```bash
+openssl rand -base64 32
+```
+
+## Implementation Details
+
+### Route Structure
+
+The web interface follows Next.js App Router conventions:
+
+- **Main chat page**: `app/page.jsx` → loads `ChatPage` component
+- **Streaming endpoint**: `app/stream/chat/route.js` → imports `lib/chat/api.js`
+- **Auth routes**: `app/api/auth/[...nextauth]/route.js` → imports `lib/auth/index.js`
+
+### Component Architecture
+
+The chat UI is built with React Server Components and Client Components:
+
+- **`ChatPage`** (`lib/chat/components/chat-page.jsx`) — Top-level page wrapper
+- **`Chat`** (`lib/chat/components/chat.jsx`) — Main chat interface with message list
+- **`ChatInput`** (`lib/chat/components/chat-input.jsx`) — Input field with file upload
+- **`Message`** (`lib/chat/components/message.jsx`) — Individual message rendering
+- **`AppSidebar`** (`lib/chat/components/app-sidebar.jsx`) — Navigation sidebar
+
+All chat data operations use Server Actions (`'use server'` functions) with session authentication, never direct API calls.
+
+### Database Schema
+
+Chats and messages are stored in SQLite via Drizzle ORM:
+
+```javascript
+// From lib/db/schema.js (simplified)
+export const chats = sqliteTable('chats', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull(),
+  title: text('title').default('New Chat'),
+  starred: integer('starred').default(0),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const messages = sqliteTable('messages', {
+  id: text('id').primaryKey(),
+  chatId: text('chat_id').notNull().references(() => chats.id, { onDelete: 'cascade' }),
+  role: text('role').notNull(), // 'user' | 'assistant'
+  content: text('content').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
+```
+
+### Security Model
+
+The web interface enforces security at multiple layers:
+
+1. **Session cookies** — httpOnly, signed with `AUTH_SECRET`
+2. **Server Actions** — All data mutations go through `requireAuth()` checks
+3. **Route handlers** — Streaming endpoint validates session via `auth()`
+4. **Database queries** — Row-level ownership checks (user ID or 'telegram')
+
+<Warning>
+The `/api` routes use API key authentication and are for **external callers only**. Never use `/api` routes from browser code — use Server Actions instead.
+</Warning>
+
+## Customization
+
+Customize the web interface appearance via `theme.css` in your project root. This file is loaded after the managed `app/globals.css` and overrides default styles.
+
+```css
+/* theme.css example */
+:root {
+  --background: 0 0% 100%;
+  --foreground: 222.2 84% 4.9%;
+  --primary: 221.2 83.2% 53.3%;
+}
+```
+
+The managed CSS files are auto-updated during `init` — user customizations should go in `theme.css` only.
+
+## Voice Input (Optional)
+
+The chat input includes optional voice recording powered by OpenAI Whisper. Enable with:
+
+```bash
+NEXT_PUBLIC_VOICE_ENABLED=true
+```
+
+Voice input requires `OPENAI_API_KEY` for transcription. The audio stream is sent to the server, transcribed, and the resulting text is streamed character-by-character into the input field.
+
+```javascript
+// From lib/chat/components/chat-input.jsx
+const { isRecording, startRecording, stopRecording } = useVoiceInput({
+  getToken: getVoiceToken,
+  onTranscript: (text) => {
+    // Stream transcription character-by-character
+    let i = 0;
+    const streamChar = () => {
+      if (i >= text.length) return;
+      setInput((prev) => prev + text[i]);
+      i++;
+      setTimeout(streamChar, 30);
+    };
+    streamChar();
+  },
+});
+```
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Telegram Integration" icon="telegram" href="/chat/telegram">
+    Add Telegram bot for mobile chat access
+  </Card>
+  <Card title="Adding Channels" icon="plug" href="/chat/adding-channels">
+    Build custom channel adapters
+  </Card>
+</CardGroup>

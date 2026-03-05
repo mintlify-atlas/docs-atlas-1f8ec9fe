@@ -1,0 +1,576 @@
+---
+title: Installation
+description: Detailed installation guide for The Pope Bot
+---
+
+## Prerequisites
+
+The Pope Bot requires several tools to be installed on your system before you begin.
+
+### Required Tools
+
+<AccordionGroup>
+  <Accordion title="Node.js 18+">
+    The Pope Bot requires Node.js 18 or later.
+
+    **Install:**
+    - Download from [nodejs.org](https://nodejs.org)
+    - npm is included with Node.js
+
+    **Verify:**
+    ```bash
+    node --version  # Should be 18.0.0 or higher
+    npm --version
+    ```
+  </Accordion>
+
+  <Accordion title="Git">
+    Git is required for repository management and version control.
+
+    **Install:**
+    - Download from [git-scm.com](https://git-scm.com)
+
+    **Verify:**
+    ```bash
+    git --version
+    ```
+  </Accordion>
+
+  <Accordion title="GitHub CLI">
+    The GitHub CLI (`gh`) is used for authentication and repository operations.
+
+    **Install:**
+    - Download from [cli.github.com](https://cli.github.com)
+
+    **Setup:**
+    ```bash
+    gh auth login
+    ```
+
+    Follow the prompts to authenticate with your GitHub account.
+
+    **Verify:**
+    ```bash
+    gh auth status
+    ```
+  </Accordion>
+
+  <Accordion title="Docker + Docker Compose">
+    Docker is required to run the agent containers and production deployment.
+
+    **Install:**
+    - Download Docker Desktop from [docker.com](https://docs.docker.com/get-docker/)
+    - Docker Compose is included with Docker Desktop
+    - Installation requires admin/sudo password
+
+    **Verify:**
+    ```bash
+    docker --version
+    docker compose version
+    ```
+
+    <Warning>
+      Make sure Docker Desktop is running before proceeding with setup.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="ngrok (Local Development Only)">
+    ngrok is only required for local installations without port forwarding. VPS/cloud deployments don't need it.
+
+    **Why ngrok?**
+    Your server needs to be reachable from the internet for GitHub webhooks and Telegram integration.
+
+    **Install:**
+    1. Sign up for a free account at [ngrok.com](https://dashboard.ngrok.com/signup)
+    2. Download from [ngrok.com/download](https://ngrok.com/download)
+    3. Configure your authtoken:
+
+    ```bash
+    ngrok config add-authtoken <YOUR_TOKEN>
+    ```
+
+    **Start ngrok:**
+    ```bash
+    ngrok http 80
+    ```
+
+    <Info>
+      On the free plan, your ngrok URL changes every time you restart. Consider upgrading to a paid plan for a static domain, or deploy to a VPS.
+    </Info>
+
+    **Alternatives to ngrok:**
+    - Port forwarding on your router
+    - Cloudflare Tunnel
+    - Deploy to a VPS (recommended for production)
+  </Accordion>
+</AccordionGroup>
+
+### API Keys
+
+You'll need at least one LLM provider API key:
+
+<Tabs>
+  <Tab title="Anthropic (Recommended)">
+    **Anthropic Claude** is the default and recommended provider.
+
+    1. Sign up at [console.anthropic.com](https://console.anthropic.com)
+    2. Create an API key
+    3. Add credits to your account
+
+    The setup wizard will prompt for this key.
+
+    **Using a Claude Subscription:**
+
+    If you have Claude Pro (\$20/mo) or Max (\$100+/mo), you can use your subscription instead of API credits:
+
+    ```bash
+    npm install -g @anthropic-ai/claude-code
+    claude setup-token
+    ```
+
+    Paste the token (starts with `sk-ant-oat01-`) during setup when prompted.
+  </Tab>
+
+  <Tab title="OpenAI">
+    **OpenAI GPT-4** is fully supported.
+
+    1. Sign up at [platform.openai.com](https://platform.openai.com)
+    2. Create an API key
+    3. Add credits to your account
+
+    During setup, choose OpenAI as your provider.
+  </Tab>
+
+  <Tab title="Google">
+    **Google Gemini 2.5 Pro** is supported.
+
+    1. Get an API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+    2. During setup, choose Google as your provider
+  </Tab>
+
+  <Tab title="Custom">
+    Any OpenAI-compatible API endpoint is supported.
+
+    During setup:
+    1. Choose Custom as your provider
+    2. Provide your base URL
+    3. Provide your API key (if required)
+  </Tab>
+</Tabs>
+
+### Optional Services
+
+- **Brave Search API** - For web search capabilities (optional)
+  - Sign up at [brave.com/search/api](https://brave.com/search/api)
+  - Available for Anthropic and OpenAI providers only
+
+## System Requirements
+
+### Minimum Requirements
+
+- **CPU**: 2 cores
+- **RAM**: 4GB
+- **Disk**: 10GB free space
+- **Network**: Stable internet connection
+
+### Recommended Requirements
+
+- **CPU**: 4+ cores
+- **RAM**: 8GB+
+- **Disk**: 20GB+ SSD
+- **Network**: High-speed internet
+
+### Platform Support
+
+<Tabs>
+  <Tab title="macOS">
+    Fully supported on macOS 10.15 (Catalina) and later.
+
+    **Notes:**
+    - Docker Desktop for Mac required
+    - Apple Silicon (M1/M2) fully supported
+  </Tab>
+
+  <Tab title="Linux">
+    Fully supported on modern Linux distributions:
+    - Ubuntu 20.04+
+    - Debian 11+
+    - Fedora 35+
+    - Other distributions with Docker support
+
+    **Notes:**
+    - Docker Engine and Docker Compose required
+    - Recommended for production VPS deployments
+  </Tab>
+
+  <Tab title="Windows">
+    Supported via WSL2 (Windows Subsystem for Linux).
+
+    **Setup:**
+    1. Install WSL2
+    2. Install Ubuntu from Microsoft Store
+    3. Install Docker Desktop for Windows with WSL2 backend
+    4. Run all commands in WSL2 terminal
+
+    <Note>
+      Native Windows (PowerShell/CMD) is not supported. Use WSL2.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Installation Steps
+
+<Steps>
+  <Step title="Verify prerequisites">
+    Before starting, verify all required tools are installed:
+
+    ```bash
+    node --version    # 18.0.0 or higher
+    npm --version
+    git --version
+    gh auth status    # Must be authenticated
+    docker --version
+    docker compose version
+    ```
+
+    For local development:
+    ```bash
+    ngrok version
+    ngrok config check
+    ```
+  </Step>
+
+  <Step title="Start ngrok (local development only)">
+    If developing locally without port forwarding, start ngrok in a separate terminal:
+
+    ```bash
+    ngrok http 80
+    ```
+
+    Keep this running and note your ngrok URL (e.g., `https://abc123.ngrok.io`). You'll need this for the `APP_URL` during setup.
+
+    <Info>
+      Skip this step if deploying to a VPS or using port forwarding.
+    </Info>
+  </Step>
+
+  <Step title="Scaffold the project">
+    Create a new directory and initialize The Pope Bot:
+
+    ```bash
+    mkdir my-agent && cd my-agent
+    npx thepopebot@latest init
+    ```
+
+    This scaffolds:
+    - Next.js project structure
+    - GitHub Actions workflows
+    - Docker configuration
+    - Agent templates and config files
+  </Step>
+
+  <Step title="Run the setup wizard">
+    Start the interactive setup:
+
+    ```bash
+    npm run setup
+    ```
+
+    The wizard will guide you through:
+
+    **1. Prerequisites Check**
+    - Validates Node.js, Git, GitHub CLI
+
+    **2. GitHub Repository**
+    - Creates a new repository
+    - Pushes initial commit
+
+    **3. GitHub Token**
+    - Creates a Personal Access Token
+    - Scoped to your repository
+
+    **4. App URL**
+    - For local: `https://your-ngrok-url.ngrok.io`
+    - For VPS: `https://yourdomain.com`
+
+    **5. LLM Provider (Chat)**
+    - Choose provider (Anthropic/OpenAI/Google/Custom)
+    - Enter API key
+    - Choose model
+
+    **6. Agent LLM Settings (Optional)**
+    - Option to use different settings for agent jobs
+    - Can use different model or provider
+
+    **7. OAuth Token (Optional)**
+    - If using Claude subscription
+    - Paste token from `claude setup-token`
+
+    **8. Web Search (Optional)**
+    - Enter Brave API key for web search
+    - Only available for Anthropic and OpenAI providers
+
+    **9. GitHub Secrets & Variables**
+    - Automatically sets repository secrets
+    - Configures variables
+
+    **10. Build & Start**
+    - Generates `.env`
+    - Runs `npm install`
+    - Runs `npm run build`
+    - Starts Docker containers
+  </Step>
+
+  <Step title="Access your agent">
+    Once setup completes, visit your `APP_URL` in a browser.
+
+    **First Visit:**
+    1. You'll be prompted to create an admin account
+    2. Enter email and password
+    3. This becomes your login for the web interface
+
+    **Web Interface Features:**
+    - Chat with your agent
+    - Create and manage jobs
+    - Upload files
+    - View conversation history
+    - Access settings (API keys, crons, triggers)
+  </Step>
+</Steps>
+
+## Post-Installation
+
+### Verify Installation
+
+Check that all services are running:
+
+```bash
+docker ps
+```
+
+You should see:
+- `event-handler` - Next.js server
+- `traefik` - Reverse proxy
+- `runner` - GitHub Actions runner (if using self-hosted)
+
+### Test Your Agent
+
+1. Visit your `APP_URL`
+2. Log in with your admin account
+3. Send a test message in the chat
+4. Try creating a simple job:
+
+```
+Create a file called test.txt with the content "Hello from The Pope Bot!"
+```
+
+The agent should create a job, execute it, and open a PR.
+
+### Configure Telegram (Optional)
+
+To add Telegram integration:
+
+<Steps>
+  <Step title="Create a Telegram bot">
+    1. Message [@BotFather](https://t.me/botfather) on Telegram
+    2. Send `/newbot`
+    3. Follow prompts to create your bot
+    4. Save the bot token
+  </Step>
+
+  <Step title="Run setup-telegram">
+    ```bash
+    npm run setup-telegram
+    ```
+
+    Enter your bot token when prompted.
+  </Step>
+
+  <Step title="Test the bot">
+    1. Find your bot on Telegram
+    2. Send `/start`
+    3. Chat with your agent
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Setup fails with 'gh not authenticated'">
+    Make sure you've authenticated with GitHub CLI:
+
+    ```bash
+    gh auth login
+    gh auth status
+    ```
+
+    If still failing, try:
+    ```bash
+    gh auth refresh
+    ```
+  </Accordion>
+
+  <Accordion title="Docker containers won't start">
+    **Check Docker is running:**
+    ```bash
+    docker info
+    ```
+
+    **Check logs:**
+    ```bash
+    docker logs event-handler
+    docker logs traefik
+    ```
+
+    **Restart Docker:**
+    - Docker Desktop: Restart from system tray
+    - Linux: `sudo systemctl restart docker`
+
+    **Check resources:**
+    - Docker Desktop: Increase RAM/CPU in settings
+    - Minimum 4GB RAM recommended
+  </Accordion>
+
+  <Accordion title="Port 80 already in use">
+    Another service is using port 80.
+
+    **Find what's using port 80:**
+    ```bash
+    # macOS/Linux
+    sudo lsof -i :80
+
+    # Stop the service or change ports in docker-compose.yml
+    ```
+
+    **Alternative:** Modify `docker-compose.yml` to use different ports:
+    ```yaml
+    ports:
+      - "8080:80"  # Use port 8080 instead
+    ```
+
+    Then update ngrok:
+    ```bash
+    ngrok http 8080
+    ```
+  </Accordion>
+
+  <Accordion title="GitHub Actions not triggering">
+    **Check Actions are enabled:**
+    1. Go to your repository on GitHub
+    2. Settings → Actions → General
+    3. Enable "Allow all actions and reusable workflows"
+
+    **Check workflows exist:**
+    ```bash
+    ls .github/workflows/
+    ```
+
+    Should contain:
+    - `run-job.yml`
+    - `auto-merge.yml`
+    - `notify-pr-complete.yml`
+    - `notify-job-failed.yml`
+    - `rebuild-event-handler.yml`
+
+    **Check you've pushed:**
+    ```bash
+    git push origin main
+    ```
+  </Accordion>
+
+  <Accordion title="ngrok URL keeps changing">
+    **Free plan limitation:**
+    ngrok free plan generates a new URL on every restart.
+
+    **Update APP_URL after restart:**
+    ```bash
+    # Get new ngrok URL from ngrok dashboard
+    npx thepopebot set-var APP_URL https://new-url.ngrok.io
+
+    # If Telegram is configured:
+    npm run setup-telegram
+    ```
+
+    **Solutions:**
+    1. **Upgrade ngrok** - Paid plans include static domains
+    2. **Deploy to VPS** - Use a real domain (recommended)
+    3. **Port forwarding** - Configure your router
+  </Accordion>
+
+  <Accordion title="Build fails with module not found">
+    **Clean install:**
+    ```bash
+    rm -rf node_modules package-lock.json
+    npm install
+    npm run build
+    ```
+
+    **Check Node.js version:**
+    ```bash
+    node --version  # Must be 18+
+    ```
+
+    **Update dependencies:**
+    ```bash
+    npm update
+    ```
+  </Accordion>
+
+  <Accordion title="LLM API errors">
+    **Verify API key:**
+    Check your `.env` file for correct API key.
+
+    **Check account status:**
+    - Anthropic: [console.anthropic.com](https://console.anthropic.com)
+    - OpenAI: [platform.openai.com](https://platform.openai.com)
+
+    Ensure you have:
+    - Valid API key
+    - Sufficient credits/quota
+    - Correct model access
+
+    **Update API key:**
+    ```bash
+    # For chat (event handler)
+    # Edit .env directly
+
+    # For agent jobs
+    npx thepopebot set-agent-secret ANTHROPIC_API_KEY
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Updating
+
+Keep The Pope Bot up to date:
+
+```bash
+npx thepopebot upgrade          # Latest stable
+npx thepopebot upgrade @beta    # Latest beta
+npx thepopebot upgrade 1.2.72   # Specific version
+```
+
+The upgrade command:
+1. Saves local changes
+2. Pulls latest from GitHub
+3. Installs new version
+4. Rebuilds project
+5. Pushes to GitHub
+6. Restarts Docker containers
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Learn how to use your agent
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/environment">
+    Configure environment variables and settings
+  </Card>
+  <Card title="Personality" icon="palette" href="/configuration/personality">
+    Customize agent personality and behavior
+  </Card>
+  <Card title="Deployment" icon="server" href="/advanced/deployment">
+    Deploy to production with HTTPS
+  </Card>
+</CardGroup>

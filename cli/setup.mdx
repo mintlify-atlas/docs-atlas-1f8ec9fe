@@ -1,0 +1,276 @@
+---
+title: "setup"
+description: "Run the interactive setup wizard to configure your thepopebot agent"
+---
+
+The `setup` command walks you through configuring a new thepopebot project. It checks prerequisites, creates a GitHub repository, collects API keys, generates secrets, and starts your agent.
+
+## Usage
+
+<CodeGroup>
+```bash npm
+npm run setup
+```
+
+```bash npx
+npx thepopebot setup
+```
+</CodeGroup>
+
+## What It Does
+
+The setup wizard is an 8-step interactive process:
+
+### Step 1: Prerequisites
+
+- Verifies Node.js 18+, npm/pnpm, Git, GitHub CLI (`gh`)
+- Authenticates `gh` CLI if needed (runs `gh auth login`)
+- Initializes git repo if not already initialized
+- Creates GitHub remote if one doesn't exist
+- Checks for ngrok (optional, warns if missing)
+
+### Step 2: GitHub PAT
+
+- Prompts for a fine-grained Personal Access Token scoped to your repository
+- Validates token and checks required scopes:
+  - Actions: Read and write
+  - Administration: Read and write
+  - Contents: Read and write
+  - Metadata: Read-only (auto-selected)
+  - Pull requests: Read and write
+  - Workflows: Read and write
+- Pushes initial commit to GitHub using the PAT
+
+### Step 3: API Keys
+
+**Chat LLM** (runs in the event handler container):
+- Choose provider: Anthropic, OpenAI, Google, or Custom (OpenAI-compatible)
+- Select model from provider's catalog
+- Enter API key
+- For custom providers, enter base URL (e.g., `http://host.docker.internal:11434/v1` for local Ollama)
+
+**Agent LLM** (optional, runs in job containers):
+- Option to use different settings for agent jobs
+- Choose separate provider and model
+- For Anthropic + Claude subscription: option to use OAuth token instead of API key
+  - Runs `claude setup-token` to generate 1-year OAuth token
+  - Switches job runner from Pi to Claude Code CLI
+  - API key stays local for chat; GitHub gets OAuth token for jobs
+
+**Brave Search** (optional):
+- Prompts for Brave Search API key
+- If provided, activates `brave-search` skill and pushes symlink to GitHub
+
+### Step 4: App URL
+
+- Prompts for public HTTPS URL (e.g., `https://abc123.ngrok.io` or `https://mybot.example.com`)
+- Sets `APP_URL` and `APP_HOSTNAME` variables
+- Generates `GH_WEBHOOK_SECRET` for GitHub webhook validation
+
+### Step 5: Sync Config
+
+- Writes all collected values to `.env`
+- Sets GitHub repository secrets:
+  - `GH_TOKEN` — Personal Access Token
+  - `GH_WEBHOOK_SECRET` — Webhook validation secret
+  - `AGENT_<PROVIDER>_API_KEY` — API keys for agent jobs
+  - `CLAUDE_CODE_OAUTH_TOKEN` (if using Claude subscription)
+- Sets GitHub repository variables:
+  - `GH_OWNER`, `GH_REPO` — Repository identifiers
+  - `APP_URL` — Public URL for webhooks
+  - `LLM_PROVIDER`, `LLM_MODEL` — Agent job LLM settings
+  - `RUNS_ON` — GitHub Actions runner type (`ubuntu-latest` or `self-hosted`)
+
+### Step 6: Build
+
+- Removes `.next/` directory
+- Runs `npm run build` to compile Next.js app
+- Retries once if build fails
+
+### Step 7: Start Server
+
+- Checks if server is already running (`GET http://localhost:80/api/ping`)
+- If not running: `docker compose up -d`
+- If running: prompts to restart
+
+### Step 8: Summary
+
+- Displays configuration summary:
+  - Repository name
+  - App URL
+  - Chat LLM provider/model (stored in `.env`)
+  - Agent LLM provider/model (stored in GitHub variables)
+  - Agent runner (Pi or Claude Code CLI)
+  - GitHub PAT (masked)
+- Lists GitHub secrets and variables that were set
+
+## Example Output
+
+```
+ _____ _          ____                  ____        _
+|_   _| |__   ___|  _ \ ___  _ __   ___| __ )  ___ | |_
+  | | | '_ \ / _ \ |_) / _ \| '_ \ / _ \  _ \ / _ \| __|
+  | | | | | |  __/  __/ (_) | |_) |  __/ |_) | (_) | |_
+  |_| |_| |_|\___|_|   \___/| .__/ \___|____/ \___/ \__|
+                            |_|
+
+┌  Interactive Setup Wizard
+│
+◇  [1/8] Checking prerequisites
+│  Existing .env detected — previously configured values can be skipped.
+│
+◆  Checking system requirements...
+│
+◇  ✓ Node.js 22.1.0
+◇  ✓ Package manager: npm
+◇  ✓ Git installed
+◇  ✓ GitHub CLI authenticated
+◇  ✓ Repository: myuser/my-agent
+│
+◇  [2/8] GitHub Personal Access Token
+│  Your agent needs permission to create branches and pull requests.
+│
+◇  Keep existing GitHub PAT (github_pat_11A...)? (y/n) › yes
+│
+◇  [3/8] API Keys
+│  Your agent uses a large language model (LLM) to think and write code.
+│
+◇  Keep existing LLM (Anthropic / claude-sonnet-4-6 (sk-ant-...))? (y/n) › yes
+│
+◆  Would you like agent jobs to use different LLM settings?
+│  (Required if you want to use a Claude Pro/Max subscription) (y/n) › no
+│
+◆  Enter Brave Search API key (optional, press Enter to skip):
+│
+◇  [4/8] App URL
+│  Your agent needs a public URL to receive webhooks from GitHub.
+│
+◇  Keep existing APP_URL (https://abc123.ngrok.io)? (y/n) › yes
+│
+◇  [5/8] Sync config
+│
+◆  Syncing configuration...
+│
+◇  Configuration synced
+│
+◇  [6/8] Build
+│
+◇  Existing build found. Rebuild? (y/n) › yes
+│
+◆  Building Next.js...
+│
+  ...
+  ✓ Compiled successfully
+│
+◇  ✓ Build complete
+│
+◇  [7/8] Start Server
+│
+◇  Server is already running. Restart? (y/n) › yes
+│
+◆  Restarting server...
+│
+◇  ✓ Server restarted
+│  Server starting — visit https://abc123.ngrok.io (may take 10-20s)
+│
+◇  [8/8] Setup Complete!
+│
+├  Configuration
+│
+│  Repository:   myuser/my-agent
+│  App URL:      https://abc123.ngrok.io
+│  LLM:          Anthropic (claude-sonnet-4-6)
+│  GitHub PAT:   github_pat_11A...••••
+│
+◇  GitHub secrets set: GH_TOKEN, GH_WEBHOOK_SECRET, AGENT_ANTHROPIC_API_KEY
+◇  GitHub variables set: GH_OWNER, GH_REPO, APP_URL, LLM_PROVIDER, LLM_MODEL
+│
+└  Chat with your agent at https://abc123.ngrok.io
+```
+
+## Re-Running Setup
+
+If `.env` already exists, the wizard detects previously configured values and offers to keep them:
+
+```
+◇  Keep existing GitHub PAT (github_pat_11A...)? (y/n) › yes
+◇  Keep existing LLM (Anthropic / claude-sonnet-4-6)? (y/n) › no
+```
+
+Answer "no" to reconfigure any value.
+
+## Chat vs Agent LLM
+
+Your bot has two sides:
+
+- **Chat** — Conversational LLM that runs in the event handler (responds to web chat, Telegram). Config stored in `.env` (`LLM_PROVIDER`, `LLM_MODEL`)
+- **Agent** — Worker LLM that runs in Docker job containers (writes code, modifies files). Config stored in GitHub variables (`LLM_PROVIDER`, `LLM_MODEL`)
+
+By default, both use the same model. To use different settings:
+
+```
+◆  Would you like agent jobs to use different LLM settings? (y/n) › yes
+```
+
+Example: fast model for chat (GPT-4o mini), powerful model for agent jobs (Claude Opus).
+
+## Using a Claude Subscription
+
+If you have a Claude Pro ($20/mo) or Max ($100+/mo) subscription, you can power agent jobs with it instead of API credits:
+
+1. During setup, choose Anthropic as agent provider
+2. Answer "yes" to "Do you have a Claude Pro or Max subscription?"
+3. Install Claude Code CLI if not already installed:
+   ```bash
+   npm install -g @anthropic-ai/claude-code
+   ```
+4. Generate OAuth token:
+   ```bash
+   claude setup-token
+   ```
+5. Paste the token (starts with `sk-ant-oat01-`) into the wizard
+
+The wizard switches the agent backend from Pi to Claude Code CLI and saves the OAuth token to GitHub secrets. Your API key stays local for chat.
+
+## Local Development (ngrok)
+
+For local installs, your server must be reachable from the internet for GitHub webhooks. Use [ngrok](https://ngrok.com) or port forwarding:
+
+```bash
+ngrok http 80
+```
+
+Copy the HTTPS URL (`https://abc123.ngrok.io`) and paste it as `APP_URL` during setup.
+
+**If your ngrok URL changes** (free plan resets on restart), update it everywhere:
+
+```bash
+npx thepopebot set-var APP_URL https://new-url.ngrok.io
+npm run setup-telegram  # If Telegram is configured
+```
+
+## Prerequisites
+
+Before running setup, install:
+
+| Requirement | Install |
+|-------------|---------||
+| **Node.js 18+** | [nodejs.org](https://nodejs.org) |
+| **npm** | Included with Node.js |
+| **Git** | [git-scm.com](https://git-scm.com) |
+| **GitHub CLI** | [cli.github.com](https://cli.github.com) |
+| **Docker + Docker Compose** | [docker.com](https://docs.docker.com/get-docker/) |
+| **ngrok** (local only) | [ngrok.com](https://ngrok.com/download) |
+
+For ngrok: sign up for a free account, then run `ngrok config add-authtoken <YOUR_TOKEN>` before setup.
+
+## Next Steps
+
+After setup completes:
+
+1. Visit your `APP_URL` to chat with your agent
+2. (Optional) Run `npm run setup-telegram` to add Telegram support
+3. Edit `config/SOUL.md` to customize your agent's personality
+4. Edit `config/CRONS.json` to schedule recurring jobs
+
+See [Setup Telegram](/cli/setup-telegram) for Telegram configuration.

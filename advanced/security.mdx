@@ -1,0 +1,267 @@
+---
+title: 'Security'
+description: 'Security measures, best practices, and risk considerations for The Pope Bot'
+---
+
+## Built-in Security Measures
+
+The Pope Bot includes several security measures by default:
+
+### API Key Authentication
+
+All external `/api` routes require a valid `x-api-key` header. Keys are SHA-256 hashed in the database.
+
+**Usage:**
+```bash
+curl -H "x-api-key: your-key-here" https://mybot.example.com/api/create-job
+```
+
+API keys are generated through the web UI and stored hashed. Never commit API keys to version control.
+
+### Webhook Secret Validation
+
+Telegram and GitHub webhook endpoints validate shared secrets. If a secret is not configured, the endpoint rejects all requests (fail-closed).
+
+**Configuration:**
+```bash
+TELEGRAM_WEBHOOK_SECRET=random-secret-here
+GH_WEBHOOK_SECRET=another-random-secret
+```
+
+These secrets are validated on every incoming webhook request to prevent unauthorized access.
+
+### Session Encryption
+
+Web sessions use JWT encrypted with `AUTH_SECRET`, stored in httpOnly cookies.
+
+**Setup:**
+```bash
+AUTH_SECRET=generate-with-openssl-rand-base64-32
+```
+
+Sessions are encrypted and signed, preventing tampering. The `httpOnly` flag prevents JavaScript access to the session cookie.
+
+### Secret Filtering in Docker Agent
+
+The `env-sanitizer` extension filters `AGENT_*` secrets from the LLM's bash subprocess, preventing the agent from accessing protected credentials.
+
+**How it works:**
+
+- Secrets prefixed with `AGENT_` are filtered from the bash environment
+- Secrets prefixed with `AGENT_LLM_` are deliberately left available for skills to use
+- The agent cannot `echo $AGENT_SECRET` to exfiltrate protected values
+- Skills can access `$AGENT_LLM_BRAVE_API_KEY` for legitimate API calls
+
+**Setting protected secrets:**
+```bash
+# Filtered from agent (protected)
+gh secret set AGENT_DATABASE_KEY --body "secret-value"
+
+# Available to agent for skills (LLM-accessible)
+npx thepopebot set-agent-llm-secret BRAVE_API_KEY "sk-..."
+```
+
+### Auto-Merge Path Restrictions
+
+The `auto-merge.yml` workflow only merges PRs where all changed files fall within `ALLOWED_PATHS` (default: `/logs`). Changes outside allowed paths require manual review.
+
+See the [Auto-Merge](/advanced/auto-merge) page for details.
+
+### Server Actions with Session Checks
+
+All browser-to-server mutations use Next.js Server Actions with `requireAuth()`, which validates the session cookie before executing.
+
+**Pattern:**
+```javascript
+'use server'
+
+import { requireAuth } from 'thepopebot/auth'
+
+export async function deleteMessage(id) {
+  const session = await requireAuth()
+  // ... perform action
+}
+```
+
+## Security Disclaimer
+
+We do our best to follow security best practices, but **all software carries risk**. The Pope Bot is provided as-is, without warranties of any kind. You are responsible for:
+
+- Securing your own infrastructure (server, network, DNS)
+- Managing your API keys and secrets
+- Reviewing agent-generated pull requests before merging outside `/logs`
+- Monitoring your agent's activity and resource usage
+
+## Local Development Risks
+
+When you run `npm run dev` and expose your machine to the internet via ngrok, Cloudflare Tunnel, or port forwarding, you are making your development server publicly accessible. This is useful for testing but carries real risks.
+
+### What's Exposed
+
+When your tunnel is active, the following endpoints are reachable from the internet:
+
+| Endpoint | Purpose | Auth |
+|----------|---------|------|
+| `/api/create-job` | Creates GitHub branches and triggers Docker agent jobs | API key required |
+| `/api/telegram/webhook` | Accepts incoming Telegram updates | Webhook secret required |
+| `/api/github/webhook` | Accepts GitHub Actions notifications | Webhook secret required |
+| `/api/ping` | Health check | None (public) |
+| `/login` | Authentication page | None (public) |
+| `/stream/chat` | Chat streaming endpoint | Session cookie |
+| `/` (all other routes) | Web chat interface | Session cookie via middleware |
+
+### Specific Risks
+
+#### No Rate Limiting
+
+There is no rate limiting on any endpoint. A determined attacker could:
+
+- Spam job creation (burning GitHub Actions minutes and LLM API credits)
+- Flood the login page with brute-force attempts
+- Overwhelm the webhook endpoints
+
+#### Local Filesystem Access
+
+The Next.js dev server runs with your user permissions. It has access to your local filesystem through the project directory and any paths that `process.cwd()` can reach.
+
+#### Local Network Exposure
+
+`npm run dev` binds to `0.0.0.0` by default. Other devices on your local network (or anyone on the same Wi-Fi) can reach the dev server directly without going through the tunnel.
+
+#### No TLS on Dev Server
+
+`npm run dev` serves plain HTTP. On your local network, API keys, session cookies, and webhook payloads are transmitted in cleartext.
+
+The tunnel itself provides TLS to the public internet, but the local hop between the tunnel agent and your dev server is unencrypted.
+
+#### Persistent Exposure
+
+Tunnels left running keep all endpoints accessible even when you're not actively developing. If you step away or close your editor but leave the tunnel up, the endpoints remain live.
+
+### Development Best Practices
+
+<Warning>
+  These recommendations are critical for local development security.
+</Warning>
+
+#### Always Set Webhook Secrets
+
+Configure `TELEGRAM_WEBHOOK_SECRET` and `GH_WEBHOOK_SECRET` in your `.env`, even for local development.
+
+```bash
+TELEGRAM_WEBHOOK_SECRET=$(openssl rand -base64 32)
+GH_WEBHOOK_SECRET=$(openssl rand -base64 32)
+```
+
+Without them, webhook endpoints reject all requests by default, but setting explicit secrets adds an extra layer of validation.
+
+#### Always Set API Keys
+
+Generate an API key through the web UI before exposing your server. Without a valid key, `/api/create-job` requests are rejected.
+
+#### Stop Tunnels When Not in Use
+
+Close ngrok or your tunnel when you're done developing. Don't leave endpoints exposed overnight.
+
+```bash
+# If using ngrok
+killall ngrok
+
+# If using Cloudflare Tunnel
+cloudflared tunnel cleanup
+```
+
+#### Restrict Telegram to Your Chat
+
+Set `TELEGRAM_CHAT_ID` in your `.env` to your personal chat ID. This ensures the bot only responds to messages from your chat, ignoring messages from anyone else who discovers the bot.
+
+```bash
+TELEGRAM_CHAT_ID=123456789
+```
+
+#### Use Docker Compose with TLS for Production
+
+For anything beyond local testing, deploy with `docker compose up` and enable Let's Encrypt TLS. See the [Deployment](/advanced/deployment) page.
+
+#### Review Auto-Merge Settings
+
+Keep `ALLOWED_PATHS` restrictive (default `/logs`). Only widen it after reviewing what your agent might change.
+
+```bash
+# Via GitHub variables
+gh variable set ALLOWED_PATHS --body "/logs" --repo OWNER/REPO
+```
+
+## Production Security Checklist
+
+<AccordionGroup>
+  <Accordion title="Infrastructure Security">
+    - [ ] Server firewall configured (only ports 80, 443, and SSH open)
+    - [ ] SSH key-based authentication (password auth disabled)
+    - [ ] Regular security updates (`apt update && apt upgrade`)
+    - [ ] Non-root user for running services
+    - [ ] Fail2ban or similar intrusion prevention
+  </Accordion>
+
+  <Accordion title="Application Security">
+    - [ ] Strong `AUTH_SECRET` generated and set
+    - [ ] API keys rotated regularly
+    - [ ] Webhook secrets configured
+    - [ ] HTTPS enabled with Let's Encrypt
+    - [ ] `ALLOWED_PATHS` restrictive (default `/logs`)
+    - [ ] Regular backups of `.env` and database
+  </Accordion>
+
+  <Accordion title="Agent Security">
+    - [ ] Protected secrets use `AGENT_` prefix (not `AGENT_LLM_`)
+    - [ ] Skill secrets use `AGENT_LLM_` prefix for legitimate access
+    - [ ] Auto-merge disabled or restricted to safe paths
+    - [ ] Regular review of agent-generated PRs
+    - [ ] Monitoring of agent activity and resource usage
+  </Accordion>
+
+  <Accordion title="Monitoring">
+    - [ ] Log aggregation configured
+    - [ ] Alert on unusual activity (high API usage, failed auth attempts)
+    - [ ] Resource monitoring (CPU, memory, disk)
+    - [ ] Regular review of job logs
+  </Accordion>
+</AccordionGroup>
+
+## Credential Management
+
+### Environment Variables
+
+Never commit `.env` files to version control. Add to `.gitignore`:
+
+```bash
+.env
+.env.local
+.env.production
+```
+
+### GitHub Secrets
+
+Use GitHub secrets for CI/CD credentials:
+
+```bash
+gh secret set AGENT_ANTHROPIC_API_KEY --body "sk-..."
+```
+
+### Rotation Policy
+
+Rotate credentials regularly:
+
+- API keys: Every 90 days
+- Webhook secrets: Every 180 days
+- `AUTH_SECRET`: Every 365 days (invalidates all sessions)
+
+## Reporting Security Issues
+
+If you discover a security vulnerability, please report it responsibly:
+
+1. **Do not** open a public GitHub issue
+2. Email security details to the maintainers
+3. Allow time for a fix before public disclosure
+
+For a detailed list of known security findings and their status, see `SECURITY_TODOS.md` in the repository.

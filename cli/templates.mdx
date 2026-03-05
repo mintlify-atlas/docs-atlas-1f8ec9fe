@@ -1,0 +1,347 @@
+---
+title: "templates"
+description: "Manage template files: compare, restore, and track changes"
+---
+
+thepopebot ships with template files that scaffold your project structure. Two commands help you manage template updates: `diff` (compare) and `reset` (restore).
+
+## Template System Overview
+
+When you run `npx thepopebot init`, the package copies template files from `node_modules/thepopebot/templates/` to your project directory.
+
+Template files fall into two categories:
+
+- **Managed files** — Auto-updated by `init` to match the package version (`.github/workflows/`, `docker/`, etc.)
+- **User files** — Never overwritten, but you're notified when new templates are available (`config/SOUL.md`, `app/`, etc.)
+
+See [Init](/cli/init) for the complete list of managed vs user files.
+
+## Template File Convention
+
+Files ending in `.template` are scaffolded with the suffix stripped:
+
+| In `templates/` | Scaffolded as |
+|-----------------|---------------|
+| `.gitignore.template` | `.gitignore` |
+| `CLAUDE.md.template` | `CLAUDE.md` |
+| `api/CLAUDE.md.template` | `api/CLAUDE.md` |
+
+This prevents npm from mangling `.gitignore` and keeps AI tools from picking up `CLAUDE.md` as real project docs.
+
+## diff
+
+Compare your project files to the package templates. Shows which files differ and displays unified diff output.
+
+### Usage
+
+<CodeGroup>
+```bash List All Differences
+npx thepopebot diff
+```
+
+```bash Compare Specific File
+npx thepopebot diff config/SOUL.md
+```
+</CodeGroup>
+
+### List All Differences
+
+```bash
+npx thepopebot diff
+```
+
+Outputs a list of files that differ from the current package templates:
+
+```
+Files that differ from package templates:
+
+  config/CRONS.json
+  config/SOUL.md
+  app/page.jsx
+
+Usage: thepopebot diff <file>
+Example: thepopebot diff config/SOUL.md
+```
+
+### Compare Specific File
+
+```bash
+npx thepopebot diff config/SOUL.md
+```
+
+Shows a unified diff (uses `git diff --no-index` for colored output):
+
+```diff
+diff --git a/config/SOUL.md b/templates/config/SOUL.md
+index a1b2c3d..e4f5g6h 100644
+--- a/config/SOUL.md
++++ b/templates/config/SOUL.md
+@@ -1,5 +1,5 @@
+ # Soul
+ 
+-You are Bob, a helpful assistant.
++You are a helpful AI assistant.
+ 
+ You help users with coding tasks.
+```
+
+If the files are identical:
+
+```
+Files are identical.
+```
+
+If the file doesn't exist in your project:
+
+```
+config/SOUL.md does not exist in your project.
+Run "thepopebot reset config/SOUL.md" to create it.
+```
+
+### Why Files Differ
+
+Files can differ for two reasons:
+
+1. **You edited them** — You customized `config/SOUL.md` to change your agent's personality
+2. **thepopebot updated** — A new package version ships updated templates
+
+Use `diff` to review changes before accepting updates with `reset`.
+
+## reset
+
+Restore a file to the package default template. Overwrites your existing file.
+
+### Usage
+
+<CodeGroup>
+```bash List Available Templates
+npx thepopebot reset
+```
+
+```bash Reset Specific File
+npx thepopebot reset config/SOUL.md
+```
+
+```bash Reset Directory
+npx thepopebot reset docker/
+```
+</CodeGroup>
+
+### List Available Templates
+
+```bash
+npx thepopebot reset
+```
+
+Outputs all template files that can be restored:
+
+```
+Available template files:
+
+  .gitignore
+  next.config.mjs
+  instrumentation.js
+  config/SOUL.md
+  config/JOB_PLANNING.md
+  config/CRONS.json
+  .github/workflows/run-job.yml
+  docker/event-handler/Dockerfile
+  app/page.jsx
+  ...
+
+Usage: thepopebot reset <file>
+Example: thepopebot reset config/SOUL.md
+```
+
+### Reset Specific File
+
+```bash
+npx thepopebot reset config/SOUL.md
+```
+
+Copies the package template to your project, **overwriting** the existing file:
+
+```
+Restored config/SOUL.md
+```
+
+**Warning**: This discards your local changes. Use `diff` first to review what you'll lose.
+
+### Reset Directory
+
+```bash
+npx thepopebot reset docker/
+```
+
+Restores all files in a directory:
+
+```
+Restoring docker/...
+
+  Restored docker/event-handler/Dockerfile
+  Restored docker/event-handler/entrypoint.sh
+  Restored docker/event-handler/CLAUDE.md
+  Restored docker/pi-coding-agent-job/Dockerfile
+  ...
+```
+
+## Workflow: Review and Apply Updates
+
+After upgrading, `init` reports template changes:
+
+```
+Updated templates available:
+These files differ from the current package templates.
+
+  config/CRONS.json
+  config/JOB_PLANNING.md
+
+To view differences:  npx thepopebot diff <file>
+To reset to default:  npx thepopebot reset <file>
+```
+
+### Step 1: Review Changes
+
+```bash
+npx thepopebot diff config/CRONS.json
+```
+
+```diff
+diff --git a/config/CRONS.json b/templates/config/CRONS.json
+--- a/config/CRONS.json
++++ b/templates/config/CRONS.json
+@@ -5,6 +5,7 @@
+       "schedule": "0 0 * * *",
+       "type": "agent",
+-      "job": "Check for updates"
++      "job": "Check for updates",
++      "enabled": true
+     }
+   ]
+ }
+```
+
+### Step 2: Decide
+
+- **Keep your version**: Do nothing. Your file stays as-is.
+- **Accept the update**: Run `reset`.
+- **Merge manually**: Copy the change from the diff into your file.
+
+### Step 3: Apply Update (If Desired)
+
+```bash
+npx thepopebot reset config/CRONS.json
+```
+
+```
+Restored config/CRONS.json
+```
+
+Your file now matches the package template.
+
+## Managed Paths
+
+Managed files are **auto-updated** by `init`. You don't need to run `diff` or `reset` for them — `init` handles it.
+
+Managed paths (from `bin/managed-paths.js`):
+
+- `.github/workflows/`
+- `docker/`
+- `docker-compose.yml`
+- `.dockerignore`
+- `CLAUDE.md`
+- `app/`
+
+If you've customized a managed file, use `--no-managed` during `init` to prevent overwrites:
+
+```bash
+npx thepopebot init --no-managed
+```
+
+Then manually merge template changes using `diff` and `reset`.
+
+## Example: Restore Default Personality
+
+You customized `config/SOUL.md` but want to revert to the default:
+
+```bash
+npx thepopebot diff config/SOUL.md  # Review your changes
+npx thepopebot reset config/SOUL.md  # Restore default
+```
+
+## Example: Sync Docker Files After Upgrade
+
+After upgrading, you want to update the job container Dockerfile to match the new template:
+
+```bash
+npx thepopebot diff docker/pi-coding-agent-job/Dockerfile
+npx thepopebot reset docker/pi-coding-agent-job/Dockerfile
+```
+
+Note: `docker/event-handler/` is managed and auto-synced by `init`. You don't need to reset it manually.
+
+## Example: Create Missing File
+
+You deleted `config/TRIGGERS.json` and want to restore it:
+
+```bash
+npx thepopebot reset config/TRIGGERS.json
+```
+
+```
+Restored config/TRIGGERS.json
+```
+
+## Template Not Found Error
+
+If you try to reset a file that doesn't exist in the package templates:
+
+```bash
+npx thepopebot reset config/MISSING.md
+```
+
+```
+Template not found: config/MISSING.md
+Run "thepopebot reset" to see available templates.
+```
+
+Run `npx thepopebot reset` (no arguments) to list all available templates.
+
+## Comparing Managed Files
+
+You can use `diff` to compare managed files, even though `init` auto-updates them:
+
+```bash
+npx thepopebot diff .github/workflows/run-job.yml
+```
+
+This is useful if you used `--no-managed` and want to see what changed.
+
+## Git Integration
+
+The `diff` command uses `git diff --no-index` for colored output. If `git` is not available, it falls back to plain diff.
+
+The output format is the same as `git diff`:
+
+- Lines starting with `-` were removed (your version)
+- Lines starting with `+` were added (template version)
+- Context lines (no prefix) are unchanged
+
+## When to Use `diff` and `reset`
+
+### Use `diff` When:
+
+- You want to review template changes after upgrading
+- You're debugging configuration issues and want to compare your file to the default
+- You customized a file and forgot what you changed
+
+### Use `reset` When:
+
+- You want to accept a template update
+- You broke a config file and want to start over
+- You deleted a file and want to restore it
+
+### Don't Use `reset` If:
+
+- You've customized a user file and want to keep your changes — manually merge instead
+- The file is managed — `init` handles it automatically

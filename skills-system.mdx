@@ -1,0 +1,564 @@
+---
+title: Skills System
+description: Extend your agent with custom skills and tools using the plugin architecture
+---
+
+The skills system is a plugin architecture that lets you extend your agent with custom tools without modifying core code. Skills work with both Pi and Claude Code backends, sharing the same activation mechanism.
+
+## What is a Skill?
+
+A skill is a folder containing:
+- **`SKILL.md`** - Instructions for the agent (YAML frontmatter + markdown)
+- **Script files** - Bash, Node.js, Python, or any executable
+- **`package.json`** (optional) - npm dependencies for Node.js skills
+
+<Info>
+No new tools are registered. No TypeScript. No build step. The agent teaches itself by reading SKILL.md, then runs scripts via bash.
+</Info>
+
+## How Skills Work
+
+### Progressive Disclosure (On-Demand Loading)
+
+At startup, the agent scans skill directories and loads **only the name + description** from SKILL.md frontmatter into the system prompt. Full instructions are NOT loaded until the agent decides the skill is relevant.
+
+<Steps>
+  <Step title="Startup: Agent scans skills">
+    Reads frontmatter from all `skills/active/*/SKILL.md` files:
+    ```markdown
+    ---
+    name: brave-search
+    description: Web search and content extraction via Brave Search API. Use for searching documentation, facts, or any web content.
+    ---
+    ```
+  </Step>
+
+  <Step title="System prompt includes descriptions">
+    ```markdown
+    # Active Skills
+
+    - **brave-search** - Web search and content extraction via Brave Search API
+    - **browser-tools** - Interactive browser automation via Chrome DevTools Protocol
+    - **modify-self** - Modify agent code, configuration, personality, cron jobs, skills
+    ```
+  </Step>
+
+  <Step title="User requests relevant task">
+    ```
+    User: "Search for python async tutorials"
+    ```
+  </Step>
+
+  <Step title="Agent reads full SKILL.md">
+    Agent sees `brave-search` description, decides it's relevant, reads the full instructions:
+    ```bash
+    cat skills/active/brave-search/SKILL.md
+    ```
+  </Step>
+
+  <Step title="Agent executes skill">
+    ```bash
+    skills/brave-search/search.js "python async tutorials"
+    ```
+  </Step>
+</Steps>
+
+## Skill Directory Structure
+
+```
+skills/
+├── brave-search/           # Available skill
+│   ├── SKILL.md
+│   ├── package.json
+│   ├── search.js
+│   └── content.js
+├── browser-tools/          # Available skill
+│   ├── SKILL.md
+│   ├── package.json
+│   ├── browser-nav.js
+│   ├── browser-eval.js
+│   └── ...
+└── active/                 # Activated skills (symlinks)
+    ├── brave-search -> ../brave-search
+    ├── browser-tools -> ../browser-tools
+    ├── modify-self -> ../modify-self
+    └── llm-secrets -> ../llm-secrets
+```
+
+<Note>
+Both `.pi/skills` and `.claude/skills` symlink to `skills/active/`, so one activation controls both agent backends.
+</Note>
+
+## Built-in Skills
+
+The Pope Bot includes several default skills:
+
+### browser-tools
+
+Interactive browser automation via Chrome DevTools Protocol (CDP).
+
+<Accordion title="Features">
+  - Navigate to URLs (new tabs or current tab)
+  - Execute JavaScript in active tab
+  - Take screenshots
+  - Interactive element picker (user selects elements visually)
+  - Extract page content as markdown
+  - Inspect cookies and session state
+</Accordion>
+
+<CodeGroup>
+```bash Start Chrome
+skills/browser-tools/browser-start.js              # Fresh profile
+skills/browser-tools/browser-start.js --profile    # Copy user's profile
+```
+
+```bash Navigate
+skills/browser-tools/browser-nav.js https://example.com
+skills/browser-tools/browser-nav.js https://example.com --new  # New tab
+```
+
+```bash Execute JavaScript
+skills/browser-tools/browser-eval.js 'document.title'
+skills/browser-tools/browser-eval.js '(function() { return document.querySelectorAll("button").length; })()'
+```
+
+```bash Screenshot
+skills/browser-tools/browser-screenshot.js
+# Returns temporary file path
+```
+
+```bash Interactive element picker
+skills/browser-tools/browser-pick.js "Click the submit button"
+# User selects elements visually, returns CSS selectors
+```
+</CodeGroup>
+
+### brave-search
+
+Web search and content extraction via Brave Search API.
+
+<CodeGroup>
+```bash Search
+skills/brave-search/search.js "python async tutorials"              # 5 results
+skills/brave-search/search.js "python async tutorials" -n 10        # More results
+skills/brave-search/search.js "python async tutorials" --content    # Include page content
+skills/brave-search/search.js "python async tutorials" --freshness pw  # Last week
+```
+
+```bash Extract page content
+skills/brave-search/content.js https://example.com
+# Returns readable markdown using Mozilla Readability
+```
+</CodeGroup>
+
+<Accordion title="Setup">
+  Requires Brave Search API key:
+  ```bash
+  npx thepopebot set-agent-llm-secret BRAVE_API_KEY
+  # Paste API key when prompted
+  ```
+</Accordion>
+
+### modify-self
+
+Allows the agent to modify its own code, configuration, personality, cron jobs, and skills.
+
+<CodeGroup>
+```markdown SKILL.md
+---
+name: modify-self
+description: Use when a job requires modifying the agent's own code, configuration, personality, cron jobs, skills, or operating system files.
+---
+
+# Modify Self
+
+Before making any changes, read the project documentation:
+
+```bash
+cat CLAUDE.md
+```
+```
+</CodeGroup>
+
+<Warning>
+This skill allows the agent to modify any file in the repository. Use with caution and review auto-merge path restrictions in `ALLOWED_PATHS`.
+</Warning>
+
+### llm-secrets
+
+Lists available LLM-accessible credentials (names only, not values).
+
+<CodeGroup>
+```bash List secrets
+skills/llm-secrets/llm-secrets.js
+# Output:
+# Available secrets:
+#   - BRAVE_API_KEY
+#   - BROWSER_PASSWORD
+#   - SOME_API_KEY
+#
+# To get a value: echo $KEY_NAME
+```
+
+```bash Get secret value
+echo $BRAVE_API_KEY
+```
+</CodeGroup>
+
+## Activating Skills
+
+Skills are activated by symlinking into `skills/active/`:
+
+<CodeGroup>
+```bash Activate
+ln -s ../brave-search skills/active/brave-search
+```
+
+```bash Deactivate
+rm skills/active/brave-search
+```
+
+```bash List active skills
+ls -l skills/active/
+```
+</CodeGroup>
+
+<Info>
+Skill activation is immediate for new jobs. Existing jobs use the skills active when the job branch was created.
+</Info>
+
+## Building a New Skill
+
+### Simple Bash Skill
+
+Most common pattern - single script, no dependencies.
+
+<Steps>
+  <Step title="Create skill directory">
+    ```bash
+    mkdir -p skills/transcribe
+    ```
+  </Step>
+
+  <Step title="Write SKILL.md">
+    ```markdown skills/transcribe/SKILL.md
+    ---
+    name: transcribe
+    description: Speech-to-text transcription using Groq Whisper API. Supports m4a, mp3, wav, ogg, flac, webm.
+    ---
+
+    # Transcribe
+
+    Speech-to-text using Groq Whisper API.
+
+    ## Setup
+    Requires GROQ_API_KEY environment variable.
+
+    ## Usage
+    ```bash
+    skills/transcribe/transcribe.sh <audio-file>
+    ```
+    ```
+  </Step>
+
+  <Step title="Write script">
+    ```bash skills/transcribe/transcribe.sh
+    #!/bin/bash
+    if [ -z "$1" ]; then echo "Usage: transcribe.sh <audio-file>"; exit 1; fi
+    if [ -z "$GROQ_API_KEY" ]; then echo "Error: GROQ_API_KEY not set"; exit 1; fi
+    curl -s -X POST "https://api.groq.com/openai/v1/audio/transcriptions" \
+      -H "Authorization: Bearer $GROQ_API_KEY" \
+      -F "file=@${1}" \
+      -F "model=whisper-large-v3-turbo" \
+      -F "response_format=text"
+    ```
+  </Step>
+
+  <Step title="Make executable">
+    ```bash
+    chmod +x skills/transcribe/transcribe.sh
+    ```
+  </Step>
+
+  <Step title="Activate">
+    ```bash
+    ln -s ../transcribe skills/active/transcribe
+    ```
+  </Step>
+</Steps>
+
+### Node.js Skill with Dependencies
+
+Use when bash + curl isn't sufficient (HTML parsing, API clients, etc.).
+
+<Steps>
+  <Step title="Create skill directory">
+    ```bash
+    mkdir -p skills/my-skill
+    ```
+  </Step>
+
+  <Step title="Write package.json">
+    ```json skills/my-skill/package.json
+    {
+      "name": "my-skill",
+      "version": "1.0.0",
+      "type": "module",
+      "dependencies": {
+        "axios": "^1.6.0",
+        "cheerio": "^1.0.0"
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Write SKILL.md">
+    ```markdown skills/my-skill/SKILL.md
+    ---
+    name: my-skill
+    description: Short description of what the skill does and when to use it.
+    ---
+
+    # My Skill
+
+    ## Setup
+    ```bash
+    cd skills/my-skill && npm install
+    ```
+
+    ## Usage
+    ```bash
+    skills/my-skill/script.js <args>
+    ```
+    ```
+  </Step>
+
+  <Step title="Write script">
+    ```javascript skills/my-skill/script.js
+    #!/usr/bin/env node
+    import axios from 'axios';
+    import * as cheerio from 'cheerio';
+
+    const url = process.argv[2];
+    if (!url) {
+      console.error('Usage: script.js <url>');
+      process.exit(1);
+    }
+
+    const response = await axios.get(url);
+    const $ = cheerio.load(response.data);
+    const title = $('title').text();
+    console.log(title);
+    ```
+  </Step>
+
+  <Step title="Make executable and activate">
+    ```bash
+    chmod +x skills/my-skill/script.js
+    ln -s ../my-skill skills/active/my-skill
+    ```
+  </Step>
+</Steps>
+
+<Note>
+In Docker, skill dependencies are installed automatically by the entrypoint script. Locally, run `npm install` once in the skill directory.
+</Note>
+
+## SKILL.md Format
+
+Every skill must have a `SKILL.md` file with YAML frontmatter:
+
+```markdown
+---
+name: skill-name-in-kebab-case
+description: One sentence describing what the skill does and when to use it.
+---
+
+# Skill Name
+
+## Setup
+
+Any setup instructions (API keys, dependencies, etc.)
+
+## Usage
+
+```bash
+skills/skill-name/script.sh <args>
+```
+
+Detailed usage instructions, examples, flags, etc.
+```
+
+<AccordionGroup>
+  <Accordion title="Frontmatter fields">
+    - **`name`** - Kebab-case, matches folder name
+    - **`description`** - Single sentence, appears in system prompt under "Active skills"
+  </Accordion>
+
+  <Accordion title="Body content">
+    Full usage instructions the agent reads on-demand. Use project-root-relative paths (e.g., `skills/skill-name/script.sh`).
+  </Accordion>
+</AccordionGroup>
+
+## Credential Setup
+
+Skills that need API keys use LLM-accessible secrets (`AGENT_LLM_*` prefix):
+
+```bash
+npx thepopebot set-agent-llm-secret BRAVE_API_KEY
+# Paste API key when prompted
+# Also add to .env for local development
+```
+
+For multi-line secrets like JSON or PEM files:
+
+```bash
+npx thepopebot set-agent-llm-secret GOOGLE_CREDENTIALS < credentials.json
+# Avoid $(cat credentials.json) - breaks on special characters
+```
+
+<Warning>
+**Security note:** LLM-accessible secrets (`AGENT_LLM_*`) are NOT filtered from the bash environment. The agent can read these values. Only use this prefix for credentials the agent needs to access (skill API keys, browser passwords, etc.).
+
+Protected secrets (`AGENT_*` prefix without `LLM_`) are filtered by the env-sanitizer extension.
+</Warning>
+
+## External Skills Repository
+
+The [pi-skills](https://github.com/badlogic/pi-skills) repository contains additional skills compatible with Pi, Claude Code, Codex CLI, Amp, and Droid:
+
+| Skill | Description |
+|-------|-------------|
+| **brave-search** | Web search and content extraction via Brave Search |
+| **browser-tools** | Interactive browser automation via Chrome DevTools Protocol |
+| **gccli** | Google Calendar CLI for events and availability |
+| **gdcli** | Google Drive CLI for file management and sharing |
+| **gmcli** | Gmail CLI for email, drafts, and labels |
+| **transcribe** | Speech-to-text transcription via Groq Whisper API |
+| **vscode** | VS Code integration for diffs and file comparison |
+| **youtube-transcript** | Fetch YouTube video transcripts |
+
+<CodeGroup>
+```bash Clone repository
+git clone https://github.com/badlogic/pi-skills ~/pi-skills
+```
+
+```bash Symlink individual skills
+ln -s ~/pi-skills/brave-search skills/brave-search
+ln -s ~/pi-skills/browser-tools skills/browser-tools
+ln -s ~/pi-skills/transcribe skills/transcribe
+```
+
+```bash Activate
+ln -s ../brave-search skills/active/brave-search
+ln -s ../browser-tools skills/active/browser-tools
+```
+</CodeGroup>
+
+## Runtime Flow Example
+
+Complete runtime flow using brave-search:
+
+<Steps>
+  <Step title="Agent starts, scans skills">
+    Reads frontmatter from `skills/active/brave-search/SKILL.md`:
+    ```yaml
+    name: brave-search
+    description: Web search and content extraction via Brave Search API
+    ```
+  </Step>
+
+  <Step title="Description added to system prompt">
+    ```markdown
+    # Active Skills
+    - **brave-search** - Web search and content extraction via Brave Search API
+    ```
+  </Step>
+
+  <Step title="User requests search">
+    ```
+    User: "Search for python async tutorials"
+    ```
+  </Step>
+
+  <Step title="Agent reads full SKILL.md">
+    Agent decides brave-search is relevant, reads complete instructions:
+    ```bash
+    cat skills/active/brave-search/SKILL.md
+    ```
+  </Step>
+
+  <Step title="Agent runs search script">
+    ```bash
+    skills/brave-search/search.js "python async tutorials"
+    ```
+  </Step>
+
+  <Step title="Script executes">
+    Script reads `$BRAVE_API_KEY` from environment, calls Brave Search API, prints results to stdout.
+  </Step>
+
+  <Step title="Agent reads results">
+    Agent processes search results and responds to user.
+  </Step>
+</Steps>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use project-root-relative paths">
+    Always use paths relative to project root in SKILL.md examples:
+    ```bash
+    # Good
+    skills/brave-search/search.js "query"
+
+    # Bad
+    ./search.js "query"
+    cd skills/brave-search && ./search.js "query"
+    ```
+  </Accordion>
+
+  <Accordion title="Keep descriptions concise">
+    The description appears in the system prompt for every request. Keep it to one sentence:
+    ```yaml
+    # Good
+    description: Web search and content extraction via Brave Search API
+
+    # Bad (too long)
+    description: This skill provides comprehensive web search capabilities using the Brave Search API, including content extraction, freshness filtering, and result pagination
+    ```
+  </Accordion>
+
+  <Accordion title="Print results to stdout">
+    Scripts should print results to stdout, not stderr. The agent reads stdout:
+    ```bash
+    # Good
+    echo "Result: $value"
+
+    # Bad (agent won't see this)
+    echo "Result: $value" >&2
+    ```
+  </Accordion>
+
+  <Accordion title="Handle missing credentials gracefully">
+    Check for required environment variables and provide helpful error messages:
+    ```bash
+    if [ -z "$BRAVE_API_KEY" ]; then
+      echo "Error: BRAVE_API_KEY not set"
+      echo "Set it with: npx thepopebot set-agent-llm-secret BRAVE_API_KEY"
+      exit 1
+    fi
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Agent" icon="docker" href="/docker-agent">
+    Learn how skills run inside job containers
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Review the complete system architecture
+  </Card>
+</CardGroup>

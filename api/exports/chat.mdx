@@ -1,0 +1,250 @@
+---
+title: 'thepopebot/chat'
+description: 'Chat UI components and streaming API'
+---
+
+## Overview
+
+The Pope Bot framework provides two chat-related exports:
+
+1. **thepopebot/chat** - React UI components
+2. **thepopebot/chat/api** - Streaming route handler
+3. **thepopebot/chat/actions** - Server actions for chat operations
+
+## thepopebot/chat
+
+React components for chat interface.
+
+### Import
+
+```javascript
+import { ChatInterface, MessageList, ChatInput } from 'thepopebot/chat';
+```
+
+### Components
+
+Exports from `lib/chat/components/index.js`:
+
+- `ChatInterface` - Full chat UI (message list + input)
+- `MessageList` - Display conversation history
+- `ChatInput` - User message input with file upload
+- `MessageBubble` - Individual message rendering
+- `ToolCallDisplay` - Show tool invocations
+
+**Usage:**
+
+```javascript
+import { ChatInterface } from 'thepopebot/chat';
+
+export default function ChatPage() {
+  return <ChatInterface chatId="thread-123" />;
+}
+```
+
+## thepopebot/chat/api
+
+Streaming chat route handler with session authentication.
+
+### Import
+
+```javascript
+import { POST } from 'thepopebot/chat/api';
+```
+
+### Route Handler
+
+<ParamField path="POST" type="function">
+  Stream chat responses using AI SDK's `createUIMessageStream`
+</ParamField>
+
+**Usage in `app/stream/chat/route.js`:**
+
+```javascript
+import { POST } from 'thepopebot/chat/api';
+export { POST };
+```
+
+### How It Works
+
+1. Validates session via `auth()`
+2. Extracts user message from AI SDK v5 message format
+3. Processes file attachments (images, PDFs, text files)
+4. Calls `chatStream()` to invoke LLM
+5. Streams response chunks back to browser
+6. Saves messages to database
+
+```javascript
+export async function POST(request) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const body = await request.json();
+  const { messages, chatId: rawChatId, trigger, codeMode, repo, branch, workspaceId } = body;
+
+  // Extract last user message
+  const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user');
+  
+  // Process text and file parts
+  let userText = lastUserMessage.parts
+    ?.filter((p) => p.type === 'text')
+    .map((p) => p.text)
+    .join('\n') || lastUserMessage.content || '';
+
+  const fileParts = lastUserMessage.parts?.filter((p) => p.type === 'file') || [];
+  const attachments = [];
+
+  for (const part of fileParts) {
+    const { mediaType, url } = part;
+    if (mediaType.startsWith('image/') || mediaType === 'application/pdf') {
+      attachments.push({ category: 'image', mimeType: mediaType, dataUrl: url });
+    } else if (mediaType.startsWith('text/')) {
+      const base64Data = url.split(',')[1];
+      const textContent = Buffer.from(base64Data, 'base64').toString('utf-8');
+      userText += `\n\nFile: ${part.name}\n\`\`\`\n${textContent}\n\`\`\``;
+    }
+  }
+
+  const threadId = rawChatId || uuidv4();
+  const chunks = chatStream(threadId, userText, attachments, {
+    userId: session.user.id,
+    skipUserPersist: trigger === 'regenerate-message',
+  });
+
+  // Stream to browser using AI SDK format
+  return createUIMessageStreamResponse({ stream });
+}
+```
+
+### Request Body
+
+<ParamField body="messages" type="array" required>
+  AI SDK message array with `role`, `parts`, and `content` fields
+</ParamField>
+
+<ParamField body="chatId" type="string">
+  Thread ID (generated if not provided)
+</ParamField>
+
+<ParamField body="trigger" type="string">
+  Action trigger: `regenerate-message` skips user message persistence
+</ParamField>
+
+<ParamField body="codeMode" type="boolean">
+  Enable code workspace context
+</ParamField>
+
+<ParamField body="repo" type="string">
+  Repository name for code mode
+</ParamField>
+
+<ParamField body="branch" type="string">
+  Branch name for code mode
+</ParamField>
+
+<ParamField body="workspaceId" type="string">
+  Code workspace ID
+</ParamField>
+
+### File Attachments
+
+Supports:
+- **Images** (`image/*`) - Passed to LLM for vision analysis
+- **PDFs** (`application/pdf`) - Passed to LLM for document analysis
+- **Text files** (`text/*`, `application/json`) - Decoded and inlined into message
+
+### Streaming Format
+
+Uses AI SDK v5 streaming protocol:
+
+```typescript
+// Text chunks
+{ type: 'text-start', id: string }
+{ type: 'text-delta', id: string, delta: string }
+{ type: 'text-end', id: string }
+
+// Tool calls
+{ type: 'tool-input-start', toolCallId: string, toolName: string }
+{ type: 'tool-input-available', toolCallId: string, toolName: string, input: object }
+{ type: 'tool-output-available', toolCallId: string, output: any }
+
+// Message boundaries
+{ type: 'start' }
+{ type: 'finish' }
+```
+
+## thepopebot/chat/actions
+
+Server actions for chat operations.
+
+### Import
+
+```javascript
+import { getChatHistory, deleteChat, updateChatTitle } from 'thepopebot/chat/actions';
+```
+
+### Functions
+
+<ParamField path="getChatHistory" type="function">
+  Fetch user's chat threads with metadata
+</ParamField>
+
+<ParamField path="deleteChat" type="function">
+  Delete a chat thread and all messages
+</ParamField>
+
+<ParamField path="updateChatTitle" type="function">
+  Rename a chat thread
+</ParamField>
+
+**Usage:**
+
+```javascript
+'use server';
+import { getChatHistory } from 'thepopebot/chat/actions';
+
+export async function loadChats() {
+  const chats = await getChatHistory();
+  return chats.map(c => ({ id: c.id, title: c.title }));
+}
+```
+
+## Authentication
+
+<Warning>
+**Chat API uses session auth, not API keys.**
+
+The `/stream/chat` route is separate from `/api/*` endpoints. It validates the `authjs.session-token` cookie, not the `x-api-key` header.
+</Warning>
+
+## Environment Variables
+
+<ParamField path="LLM_PROVIDER" type="string">
+  LLM provider: `anthropic`, `openai`, `google`, `custom` (default: `anthropic`)
+</ParamField>
+
+<ParamField path="LLM_MODEL" type="string">
+  Model name (default: `claude-sonnet-4-20250514`)
+</ParamField>
+
+<ParamField path="LLM_MAX_TOKENS" type="number">
+  Max output tokens (default: `4096`)
+</ParamField>
+
+<ParamField path="ANTHROPIC_API_KEY" type="string">
+  Required for `anthropic` provider
+</ParamField>
+
+<ParamField path="OPENAI_API_KEY" type="string">
+  Required for `openai` provider
+</ParamField>
+
+<ParamField path="GOOGLE_API_KEY" type="string">
+  Required for `google` provider
+</ParamField>
+
+## Related
+
+- [thepopebot/auth](/api/exports/auth) - Session authentication
+- [POST /api/create-job](/api/create-job) - Create agent jobs (different from chat)

@@ -1,0 +1,310 @@
+---
+title: 'Auto-Merge'
+description: 'Automatic PR merging with path-based safety controls'
+---
+
+## Overview
+
+By default, job PRs that only modify files under `logs/` are automatically squash-merged after the agent job completes. This enables fully autonomous agent workflows while maintaining safety through path restrictions.
+
+**How it works:**
+
+1. Agent job completes and creates a PR
+2. `auto-merge.yml` workflow runs
+3. Checks all changed files against `ALLOWED_PATHS`
+4. If all files are within allowed paths → auto-merge
+5. If any file is outside allowed paths → leave PR open for manual review
+
+## Configuration
+
+Auto-merge behavior is controlled by two **GitHub repository variables** (Settings → Secrets and variables → Actions → Variables tab).
+
+### `AUTO_MERGE`
+
+Kill switch for all auto-merging.
+
+| Value | Behavior |
+|-------|----------|
+| *(unset or any value)* | Auto-merge enabled |
+| `false` | Auto-merge disabled — all job PRs stay open for manual review |
+
+**To disable auto-merge completely:**
+
+```bash
+gh variable set AUTO_MERGE --body "false" --repo OWNER/REPO
+```
+
+**To re-enable:**
+
+```bash
+gh variable delete AUTO_MERGE --repo OWNER/REPO
+```
+
+### `ALLOWED_PATHS`
+
+Comma-separated path prefixes that the agent is allowed to modify and still get auto-merged. If any changed file falls outside these prefixes, the PR stays open.
+
+| Value | Behavior |
+|-------|----------|
+| *(unset)* | Defaults to `/logs` — only log files auto-merge |
+| `/` | Everything allowed — all job PRs auto-merge |
+| `/logs` | Only log changes auto-merge |
+| `/logs,/docs` | Log and documentation changes auto-merge |
+
+Path prefixes are matched from the repo root. A leading `/` is optional (`logs` and `/logs` are equivalent).
+
+**To set allowed paths:**
+
+```bash
+gh variable set ALLOWED_PATHS --body "/logs" --repo OWNER/REPO
+```
+
+**To allow all paths (original behavior):**
+
+```bash
+gh variable set ALLOWED_PATHS --body "/" --repo OWNER/REPO
+```
+
+## Examples
+
+### Safe Default (Recommended)
+
+Only auto-merge log changes:
+
+```bash
+ALLOWED_PATHS=/logs
+```
+
+**Behavior:**
+- PR changes only `logs/job-123/session.log` → **Auto-merged**
+- PR changes `src/index.js` → **Stays open for review**
+- PR changes `logs/job-123/session.log` AND `README.md` → **Stays open for review**
+
+### Allow All (Original Behavior)
+
+Auto-merge everything the agent changes:
+
+```bash
+AUTO_MERGE=(unset)
+ALLOWED_PATHS=/
+```
+
+<Warning>
+  This gives the agent full autonomy to modify your codebase without review. Only use this if you fully trust the agent and have good rollback procedures.
+</Warning>
+
+### Manual Review Everything
+
+Require manual review for all PRs:
+
+```bash
+AUTO_MERGE=false
+```
+
+**Behavior:**
+- All PRs stay open regardless of changed files
+- Useful during initial testing or when making risky changes
+
+### Multiple Allowed Paths
+
+Allow logs and documentation changes:
+
+```bash
+ALLOWED_PATHS=/logs,/docs
+```
+
+**Behavior:**
+- PR changes only `logs/` files → **Auto-merged**
+- PR changes only `docs/` files → **Auto-merged**
+- PR changes both `logs/` and `docs/` files → **Auto-merged**
+- PR changes `logs/` and `src/` files → **Stays open for review**
+
+## Workflow Details
+
+The `auto-merge.yml` workflow runs automatically after agent jobs complete. Here's what it does:
+
+```yaml
+# Simplified workflow logic
+1. Fetch PR changed files via GitHub API
+2. Parse ALLOWED_PATHS variable (default: /logs)
+3. Check each changed file against allowed path prefixes
+4. If any file is outside allowed paths:
+   - Log which files were blocked
+   - Exit without merging
+5. If all files are within allowed paths:
+   - Squash merge the PR
+   - Delete the branch
+```
+
+### Workflow Logs
+
+If a PR is blocked, the workflow logs show exactly why:
+
+```
+Checking PR #42 files against allowed paths: /logs
+Blocked files:
+  - src/index.js (outside allowed paths)
+  - README.md (outside allowed paths)
+Auto-merge blocked: some files outside allowed paths
+```
+
+## Safety Considerations
+
+### Why Path Restrictions Matter
+
+Without path restrictions, an agent could:
+
+- Modify your application code
+- Change security settings
+- Alter CI/CD workflows
+- Delete critical files
+
+All of these changes would be automatically merged without human review.
+
+Path restrictions let you give the agent autonomy in safe areas (like logs) while requiring review for critical changes.
+
+### Choosing Allowed Paths
+
+<AccordionGroup>
+  <Accordion title="/logs (Recommended Default)">
+    **Safe for:** Agent logging, session transcripts, debugging output
+    
+    **Risk level:** Low — logs are read-only for humans, write-only for agents
+    
+    **Use when:** You want the agent to autonomously track its work without polluting PR reviews
+  </Accordion>
+
+  <Accordion title="/docs">
+    **Safe for:** Documentation updates, README changes, guides
+    
+    **Risk level:** Medium — documentation can mislead users if incorrect
+    
+    **Use when:** You trust the agent to maintain accurate documentation and you review it periodically
+  </Accordion>
+
+  <Accordion title="/ (Everything)">
+    **Safe for:** Fully autonomous agents with high trust
+    
+    **Risk level:** High — agent can change anything
+    
+    **Use when:** You have strong rollback procedures, comprehensive tests, and full trust in the agent's decision-making
+  </Accordion>
+</AccordionGroup>
+
+### Gradual Expansion
+
+Start restrictive and expand as you gain confidence:
+
+1. **Week 1:** `/logs` only — agent can only log
+2. **Week 2:** `/logs,/docs` — agent can update documentation
+3. **Week 3:** `/logs,/docs,/tests` — agent can add test cases
+4. **Month 2:** `/` — full autonomy (if appropriate)
+
+## Troubleshooting
+
+### PR Not Auto-Merging
+
+Check the `auto-merge.yml` workflow logs for the blocked files:
+
+```bash
+gh run list --workflow=auto-merge.yml --limit 5
+gh run view <run-id> --log
+```
+
+Common causes:
+
+- Files outside `ALLOWED_PATHS`
+- `AUTO_MERGE=false` is set
+- Workflow failed due to GitHub API rate limits
+- PR conflicts require manual resolution
+
+### Accidentally Merged Unwanted Changes
+
+Revert the merge commit:
+
+```bash
+git revert -m 1 <merge-commit-sha>
+git push
+```
+
+Then tighten `ALLOWED_PATHS` to prevent recurrence.
+
+### Want to Merge a Blocked PR
+
+If the workflow blocked a PR but you want to merge it:
+
+1. Review the changes manually
+2. Merge via GitHub UI or CLI:
+
+```bash
+gh pr merge <PR-number> --squash --delete-branch
+```
+
+The path restrictions only affect automatic merging, not manual merges.
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Start Restrictive" icon="shield">
+    Begin with `/logs` only. Expand permissions gradually as you gain confidence in the agent's behavior.
+  </Card>
+  
+  <Card title="Monitor Blocked PRs" icon="eye">
+    Regularly review PRs that were blocked. If the agent frequently needs to change certain paths, consider adding them to `ALLOWED_PATHS`.
+  </Card>
+  
+  <Card title="Audit Auto-Merged PRs" icon="list-check">
+    Periodically review auto-merged PRs to ensure the agent is making appropriate changes within allowed paths.
+  </Card>
+  
+  <Card title="Test Before Expanding" icon="flask">
+    Before adding a new path to `ALLOWED_PATHS`, test the agent's behavior in that area with `AUTO_MERGE=false`.
+  </Card>
+</CardGroup>
+
+## Integration with Other Features
+
+### With Cron Jobs
+
+Cron jobs that create PRs follow the same auto-merge rules:
+
+```json
+{
+  "name": "daily-summary",
+  "schedule": "0 0 * * *",
+  "type": "agent",
+  "job": "Generate a daily summary in logs/summaries/"
+}
+```
+
+If the agent writes to `logs/summaries/`, it auto-merges. If it writes to `reports/`, it stays open.
+
+### With Skills
+
+Skills can modify files, and those changes are subject to auto-merge rules:
+
+```bash
+# If the agent runs this skill:
+skills/modify-self/update-config.sh
+
+# And it changes config/SOUL.md:
+# → PR stays open (config/ not in ALLOWED_PATHS)
+```
+
+### With Multi-Step Jobs
+
+If a job makes multiple commits, **all changed files across all commits** are checked:
+
+```
+Commit 1: logs/job-123/session.log
+Commit 2: logs/job-123/results.log
+Commit 3: src/index.js
+
+→ Blocked because src/index.js is outside /logs
+```
+
+## Related Configuration
+
+- [Security](/advanced/security) — Understand the security implications of auto-merge
+- [Deployment](/advanced/deployment) — Set up GitHub variables in production
+- [Building Skills](/advanced/building-skills) — Create skills that respect auto-merge boundaries

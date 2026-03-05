@@ -1,0 +1,145 @@
+---
+title: 'GET /api/jobs/status'
+description: 'Check job status and results'
+---
+
+## Endpoint
+
+```
+GET /api/jobs/status?job_id={id}
+```
+
+Fetches the current status of a job created via [POST /api/create-job](/api/create-job).
+
+## Authentication
+
+Requires `x-api-key` header. See [Authentication](/api/authentication).
+
+## Query Parameters
+
+<ParamField query="job_id" type="string" required>
+  The job ID returned from `/api/create-job`
+</ParamField>
+
+### Example Request
+
+```bash
+curl -H "x-api-key: your-api-key-here" \
+  "https://your-domain.com/api/jobs/status?job_id=abc12345"
+```
+
+## Response
+
+### Success (200)
+
+<ResponseField name="status" type="string">
+  Job state: `pending`, `running`, `completed`, `failed`, or `merged`
+</ResponseField>
+
+<ResponseField name="branch" type="string">
+  Git branch name (`job/{job_id}`)
+</ResponseField>
+
+<ResponseField name="pr_url" type="string" optional>
+  GitHub pull request URL (available after job completion)
+</ResponseField>
+
+<ResponseField name="run_url" type="string" optional>
+  GitHub Actions run URL
+</ResponseField>
+
+<ResponseField name="log" type="string" optional>
+  Job execution log (available after completion)
+</ResponseField>
+
+<ResponseField name="changed_files" type="array" optional>
+  List of files modified by the job
+</ResponseField>
+
+```json
+{
+  "status": "completed",
+  "branch": "job/abc12345",
+  "pr_url": "https://github.com/owner/repo/pull/42",
+  "run_url": "https://github.com/owner/repo/actions/runs/123456",
+  "log": "Job completed successfully...",
+  "changed_files": ["reports/daily-2024-03-05.md"]
+}
+```
+
+### Error Responses
+
+#### Unauthorized (401)
+
+```json
+{
+  "error": "Unauthorized"
+}
+```
+
+#### Internal Error (500)
+
+```json
+{
+  "error": "Failed to get job status"
+}
+```
+
+## Job States
+
+| State | Description |
+|-------|-------------|
+| `pending` | Job created, waiting for GitHub Actions to start |
+| `running` | Docker agent container is executing the task |
+| `completed` | Job finished, PR created with results |
+| `failed` | Job encountered an error during execution |
+| `merged` | PR was auto-merged into main branch |
+
+## Implementation
+
+Calls `getJobStatus(jobId)` from `lib/tools/github.js`, which:
+
+1. Fetches branch details from GitHub API
+2. Checks for associated pull request
+3. Fetches workflow run status
+4. Returns aggregated status object
+
+```javascript
+async function handleJobStatus(request) {
+  try {
+    const url = new URL(request.url);
+    const jobId = url.searchParams.get('job_id');
+    const result = await getJobStatus(jobId);
+    return Response.json(result);
+  } catch (err) {
+    console.error('Failed to get job status:', err);
+    return Response.json({ error: 'Failed to get job status' }, { status: 500 });
+  }
+}
+```
+
+## Polling for Completion
+
+Jobs typically complete within minutes to hours depending on task complexity. Poll this endpoint to track progress:
+
+```javascript
+async function waitForJob(jobId) {
+  while (true) {
+    const response = await fetch(
+      `https://your-domain.com/api/jobs/status?job_id=${jobId}`,
+      { headers: { 'x-api-key': apiKey } }
+    );
+    const { status } = await response.json();
+    
+    if (status === 'completed' || status === 'failed' || status === 'merged') {
+      return status;
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 30000)); // Poll every 30s
+  }
+}
+```
+
+## Alternative: Webhook Notifications
+
+Instead of polling, configure [GitHub webhooks](/api/github-webhook) to receive notifications when jobs complete.

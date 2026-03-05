@@ -1,0 +1,192 @@
+---
+title: "init"
+description: "Scaffold a new thepopebot project or update templates in an existing one"
+---
+
+The `init` command creates the initial project structure for a new thepopebot agent or updates managed files in an existing project.
+
+## Usage
+
+```bash
+npx thepopebot init
+```
+
+## What It Does
+
+### New Projects
+
+When run in an empty directory or non-thepopebot project, `init` scaffolds a complete agent project:
+
+1. **Creates project structure** — Copies template files from the npm package to your working directory
+2. **Generates package.json** — Sets up dependencies (thepopebot, Next.js, React, Tailwind CSS)
+3. **Creates .env** — Generates `AUTH_SECRET` and sets `THEPOPEBOT_VERSION`
+4. **Installs dependencies** — Runs `npm install`
+5. **Creates empty directories** — `cron/`, `triggers/`, `logs/`, `tmp/`, `data/`
+6. **Activates default skills** — Symlinks `browser-tools`, `llm-secrets`, `modify-self` into `skills/active/`
+7. **Creates skill links** — Symlinks `.pi/skills` and `.claude/skills` to `skills/active/`
+
+If you run `init` in a non-empty directory, you'll be prompted to create a subdirectory:
+
+```
+This directory is not empty.
+? Project directory name: › my-popebot
+
+Created my-popebot/
+Scaffolding thepopebot project...
+```
+
+### Existing Projects
+
+When run in an existing thepopebot project, `init` updates your files:
+
+- **Managed files** (`.github/workflows/`, `docker/`, `docker-compose.yml`, etc.) are auto-updated to match the package version
+- **Your files** (`config/SOUL.md`, `app/`, etc.) are never overwritten
+- **Template changes** are reported if the package ships new defaults:
+
+```
+Updated templates available:
+These files differ from the current package templates.
+
+  config/CRONS.json
+
+To view differences:  npx thepopebot diff <file>
+To reset to default:  npx thepopebot reset <file>
+```
+
+## Managed vs User Files
+
+thepopebot projects contain two types of files:
+
+### Managed Files (Auto-Updated)
+
+These infrastructure files stay in sync with the package version. `init` creates, updates, **and deletes** them to match the package exactly:
+
+- `.github/workflows/` — GitHub Actions workflows
+- `docker/` — All Docker files (Dockerfiles, entrypoints, CLAUDE.md)
+- `docker-compose.yml` — Container orchestration
+- `.dockerignore` — Docker build exclusions
+- `CLAUDE.md` — AI assistant context
+- `app/` — Next.js pages, layouts, and routes
+
+Don't edit these files — your changes will be overwritten on upgrade.
+
+### User Files (Never Overwritten)
+
+These files are yours to customize. `init` creates them once but never overwrites:
+
+- `config/SOUL.md`, `JOB_PLANNING.md`, etc. — Agent personality and prompts
+- `config/CRONS.json`, `TRIGGERS.json` — Scheduled jobs and webhook triggers
+- `docker/pi-coding-agent-job/` — Job container Dockerfile
+- `theme.css` — Custom CSS (overrides `app/globals.css`)
+
+If the package ships a new template version, `init` reports it and lets you review:
+
+```bash
+npx thepopebot diff config/SOUL.md    # See what changed
+npx thepopebot reset config/SOUL.md   # Accept the new template
+```
+
+## Template File Convention
+
+Files in the package's `templates/` directory use a `.template` suffix for files that npm or AI tools would misinterpret:
+
+| In `templates/` | Scaffolded as |
+|-----------------|---------------|
+| `.gitignore.template` | `.gitignore` |
+| `CLAUDE.md.template` | `CLAUDE.md` |
+| `api/CLAUDE.md.template` | `api/CLAUDE.md` |
+
+When `init` copies these files, it strips the `.template` suffix.
+
+## Flags
+
+### `--no-managed`
+
+Skip auto-updating managed files. Use this if you've customized infrastructure files and don't want `init` to overwrite your changes:
+
+```bash
+npx thepopebot init --no-managed
+```
+
+With this flag:
+- Managed files are **not** updated
+- New files are still created
+- You're responsible for manually syncing managed files when upgrading
+
+## Output Examples
+
+### First-Time Init
+
+```
+Scaffolding thepopebot project...
+
+  Created .gitignore
+  Created next.config.mjs
+  Created config/SOUL.md
+  Created .github/workflows/run-job.yml
+  ...
+  Created package.json
+
+Installing dependencies...
+
+  Created .env (AUTH_SECRET, THEPOPEBOT_VERSION=1.0.0)
+
+Done! Run: npm run setup
+```
+
+### Upgrade (Managed Files Updated)
+
+```
+Scaffolding thepopebot project...
+
+  Skipped config/SOUL.md (already exists)
+  Updated .github/workflows/run-job.yml
+  Updated docker-compose.yml
+  Deleted docker/old-file.sh (stale managed file)
+
+  Updated managed files:
+    .github/workflows/run-job.yml
+    docker-compose.yml
+
+  Updated .env (THEPOPEBOT_VERSION=1.1.0)
+
+Done!
+```
+
+### Template Changes Available
+
+```
+Scaffolding thepopebot project...
+
+  Skipped config/SOUL.md (already exists)
+
+  Updated templates available:
+  These files differ from the current package templates.
+  This may be from your edits, or from a thepopebot update.
+
+    config/CRONS.json
+    config/JOB_PLANNING.md
+
+  To view differences:  npx thepopebot diff <file>
+  To reset to default:  npx thepopebot reset <file>
+
+Done!
+```
+
+## When to Run
+
+Run `init` when:
+
+- **Starting a new project** — After `mkdir my-agent && cd my-agent`
+- **After upgrading** — The `upgrade` command runs `init` automatically
+- **Manually updating templates** — If you want to sync managed files without upgrading
+
+## Next Steps
+
+After running `init` on a new project:
+
+```bash
+npm run setup  # Run interactive setup wizard
+```
+
+See [Setup](/cli/setup) for the next step.

@@ -1,0 +1,217 @@
+---
+title: 'Telegram Integration'
+description: 'Register Telegram bot webhooks and receive messages'
+---
+
+## Overview
+
+The Pope Bot framework provides two Telegram endpoints:
+
+1. **POST /api/telegram/register** - Register your bot's webhook URL
+2. **POST /api/telegram/webhook** - Receive incoming messages from Telegram
+
+## Register Webhook
+
+### Endpoint
+
+```
+POST /api/telegram/register
+```
+
+Registers your Telegram bot webhook with Telegram's servers.
+
+### Authentication
+
+Requires `x-api-key` header. See [Authentication](/api/authentication).
+
+### Request Body
+
+<ParamField body="bot_token" type="string" required>
+  Your Telegram bot token from [@BotFather](https://t.me/botfather)
+</ParamField>
+
+<ParamField body="webhook_url" type="string" required>
+  Public HTTPS URL where Telegram will send updates (must be `/api/telegram/webhook`)
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X POST https://your-domain.com/api/telegram/register \
+  -H "x-api-key: your-api-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bot_token": "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
+    "webhook_url": "https://your-domain.com/api/telegram/webhook"
+  }'
+```
+
+### Response
+
+#### Success (200)
+
+```json
+{
+  "success": true,
+  "result": {
+    "url": "https://your-domain.com/api/telegram/webhook",
+    "has_custom_certificate": false,
+    "pending_update_count": 0
+  }
+}
+```
+
+#### Error Responses
+
+##### Missing Parameters (400)
+
+```json
+{
+  "error": "Missing bot_token or webhook_url"
+}
+```
+
+##### Registration Failed (500)
+
+```json
+{
+  "error": "Failed to register webhook"
+}
+```
+
+## Webhook Handler
+
+### Endpoint
+
+```
+POST /api/telegram/webhook
+```
+
+Receives incoming messages from Telegram.
+
+### Authentication
+
+**Public endpoint** - Telegram authenticates using `TELEGRAM_WEBHOOK_SECRET` environment variable.
+
+<Note>
+This endpoint does not require `x-api-key` header. Telegram verifies requests using the webhook secret.
+</Note>
+
+### How It Works
+
+1. Telegram sends message to `/api/telegram/webhook`
+2. Server validates webhook secret
+3. Message normalized via `getTelegramAdapter().receive(request)`
+4. Processes message asynchronously through AI layer
+5. Returns `{"ok": true}` immediately (non-blocking)
+6. AI generates response and sends via Telegram API
+
+```javascript
+async function handleTelegramWebhook(request) {
+  const botToken = getTelegramBotToken();
+  if (!botToken) return Response.json({ ok: true });
+
+  const adapter = getTelegramAdapter(botToken);
+  const normalized = await adapter.receive(request);
+  if (!normalized) return Response.json({ ok: true });
+
+  // Process message asynchronously (don't block webhook response)
+  processChannelMessage(adapter, normalized).catch((err) => {
+    console.error('Failed to process message:', err);
+  });
+
+  return Response.json({ ok: true });
+}
+```
+
+### Message Processing
+
+1. Acknowledge receipt to Telegram
+2. Start "typing" indicator
+3. Call `chat(threadId, text, attachments, metadata)`
+4. Stream response back to user via Telegram
+5. Stop typing indicator
+
+```javascript
+async function processChannelMessage(adapter, normalized) {
+  await adapter.acknowledge(normalized.metadata);
+  const stopIndicator = adapter.startProcessingIndicator(normalized.metadata);
+
+  try {
+    const response = await chat(
+      normalized.threadId,
+      normalized.text,
+      normalized.attachments,
+      { userId: 'telegram', chatTitle: 'Telegram' }
+    );
+    await adapter.sendResponse(normalized.threadId, response, normalized.metadata);
+  } catch (err) {
+    console.error('Failed to process message with AI:', err);
+    await adapter
+      .sendResponse(
+        normalized.threadId,
+        'Sorry, I encountered an error processing your message.',
+        normalized.metadata
+      )
+      .catch(() => {});
+  } finally {
+    stopIndicator();
+  }
+}
+```
+
+## Environment Variables
+
+<ParamField path="TELEGRAM_BOT_TOKEN" type="string" optional>
+  Default bot token (can be overridden by `/telegram/register`)
+</ParamField>
+
+<ParamField path="TELEGRAM_WEBHOOK_SECRET" type="string" required>
+  Secret token for webhook authentication
+</ParamField>
+
+## Setup Example
+
+### 1. Create Bot with BotFather
+
+1. Message [@BotFather](https://t.me/botfather) on Telegram
+2. Send `/newbot` and follow prompts
+3. Save your bot token (looks like `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`)
+
+### 2. Set Environment Variables
+
+```bash
+TELEGRAM_BOT_TOKEN=your-bot-token-here
+TELEGRAM_WEBHOOK_SECRET=random-secret-string
+```
+
+### 3. Register Webhook
+
+```bash
+curl -X POST https://your-domain.com/api/telegram/register \
+  -H "x-api-key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bot_token": "your-bot-token",
+    "webhook_url": "https://your-domain.com/api/telegram/webhook"
+  }'
+```
+
+### 4. Test Your Bot
+
+Send a message to your bot on Telegram. It should respond using your configured LLM.
+
+## Channel Adapter
+
+The Telegram integration uses a channel adapter pattern (`lib/channels/telegram.js`) to normalize messages into a common format:
+
+```javascript
+{
+  threadId: string,      // Telegram chat ID
+  text: string,          // Message text
+  attachments: [],       // Files, images, etc.
+  metadata: object       // Telegram-specific data
+}
+```
+
+This allows the AI layer (`lib/ai/`) to handle messages from any channel (Telegram, web chat, etc.) uniformly.
